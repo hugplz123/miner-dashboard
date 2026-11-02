@@ -12,7 +12,7 @@ const hourLabel = hour => `${String(hour).slice(0, 4)}-${String(hour).slice(4, 6
 const palette = ["#3f8273", "#557fa4", "#bd9147", "#937190", "#b56e55", "#72906d", "#80795f", "#5f8790"];
 let catalog, sites = [], warehouses = [], dates = [], hours = [], currentRows = [];
 let selectedDate, dayData, detailData, detailBundle, level = "template_rows";
-let requestVersion = 0, trendMode = "daily", trendState = null;
+let requestVersion = 0, dayRequestVersion = 0, trendMode = "daily", trendState = null;
 const dayCache = new Map();
 const detailCache = new Map();
 
@@ -67,7 +67,8 @@ function populateHours() {
 
 async function loadDay(date) {
   if (dayCache.has(date)) return dayCache.get(date);
-  const promise = fetch(`data/days/${compactDate(date)}.json?v=${catalog.latest_date}`)
+  const version = encodeURIComponent(catalog.exported_at || catalog.latest_date);
+  const promise = fetch(`data/days/${compactDate(date)}.json?v=${version}`)
     .then(response => {
       if (!response.ok) throw Error("按日汇总读取失败");
       return response.json();
@@ -154,7 +155,7 @@ function cardHTML(row) {
 }
 
 function render() {
-  if (!dayData) return;
+  if (!dayData || dayData.date !== selectedDate) return;
   const centerId = $("site").value;
   const site = currentSite();
   const hour = Number($("hour").value);
@@ -233,7 +234,7 @@ function hourlySeries() {
 }
 
 function renderTrend() {
-  if (!dayData || !hours.length) return;
+  if (!dayData || dayData.date !== selectedDate || !hours.length) return;
   const series = trendMode === "daily" ? dailySeries() : hourlySeries();
   const selectedKey = trendMode === "daily" ? selectedDate : String($("hour").value);
   const numeric = series.map(item => item.value).filter(value => value != null);
@@ -341,6 +342,7 @@ function showTooltip(event) {
 }
 
 async function selectDate(date, preferredHour) {
+  const token = ++dayRequestVersion;
   selectedDate = date;
   $("date").value = date;
   populateHours();
@@ -348,8 +350,17 @@ async function selectDate(date, preferredHour) {
     const candidate = [...hours].reverse().find(hour => hour <= preferredHour);
     if (candidate) $("hour").value = candidate;
   }
-  dayData = await loadDay(date);
-  render();
+  try {
+    const payload = await loadDay(date);
+    if (token !== dayRequestVersion) return;
+    dayData = payload;
+    render();
+  } catch (error) {
+    if (token !== dayRequestVersion) return;
+    $("meta").textContent = "当日数据读取失败";
+    $("notice").textContent = "日期数据暂时无法读取，请稍后重新选择该日期。";
+    console.error(error);
+  }
 }
 
 function bindChart() {
@@ -416,7 +427,7 @@ async function openDetail(id) {
   try {
     if (!detailCache.has(key)) {
       detailCache.set(key, fetchGzipJson(
-        `data/details/${row.data_center_id}/${compactDate(selectedDate)}/${row.warehouse_id}.json.gz`
+        `data/details/${row.data_center_id}/${compactDate(selectedDate)}/${row.warehouse_id}.json.gz?v=${encodeURIComponent(catalog.exported_at || catalog.latest_date)}`
       ));
     }
     const payload = await detailCache.get(key);

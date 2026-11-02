@@ -203,7 +203,7 @@ async function verifyBrowser(catalog) {
     const detailRequest = requests.slice(detailRequestsBefore)
       .find(url => url.includes("/data/details/"));
     assert(detailRequest, "detail request not found");
-    assert(detailRequest.endsWith(".json.gz"));
+    assert(/\.json\.gz(?:\?|$)/.test(detailRequest));
     assert((await page.locator("#detail-meta").textContent()).includes("WhiteOak01"));
     for (const tab of ["model_rows", "work_mode_rows", "machine_rows"]) {
       await page.locator(`[data-level="${tab}"]`).click();
@@ -224,6 +224,35 @@ async function verifyBrowser(catalog) {
     assert.equal(await page.locator(".warehouse-card").count(),
       nimrod.warehouse_count);
     assert((await page.locator("#trend-title").textContent()).includes("Nimrod01"));
+
+    const racePage = await browser.newPage({
+      viewport: { width: 1440, height: 1000 },
+    });
+    const latestDayFile = catalog.latest_date.replaceAll("-", "");
+    await racePage.route(`**/data/days/${latestDayFile}.json*`, async route => {
+      await new Promise(resolve => setTimeout(resolve, 2500));
+      await route.continue();
+    });
+    await racePage.goto(DASHBOARD_URL, { waitUntil: "domcontentloaded" });
+    await racePage.waitForFunction(() =>
+      document.querySelectorAll("#date option").length === 7);
+    const raceSite = catalog.sites.find(site =>
+      site.data_center_name === "May01"
+    ) || catalog.sites[0];
+    const raceDate = catalog.available_dates.at(-2);
+    await racePage.selectOption("#site", raceSite.data_center_id);
+    await racePage.selectOption("#date", raceDate);
+    await racePage.selectOption("#hour", `${raceDate.replaceAll("-", "")}10`);
+    await racePage.waitForFunction(date =>
+      document.querySelector("#meta")?.textContent.includes(`当前 ${date}`),
+      raceDate);
+    await racePage.waitForTimeout(3500);
+    const racePower = await racePage.locator("#metrics .metric-value").first()
+      .textContent();
+    assert(!racePower.trim().startsWith("0"),
+      "a late day response overwrote the newly selected day");
+    assert.equal(await racePage.locator("#date").inputValue(), raceDate);
+    await racePage.close();
 
     await page.setViewportSize({ width: 390, height: 844 });
     assert(await page.evaluate(() =>
