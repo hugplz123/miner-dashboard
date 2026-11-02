@@ -1,0 +1,9 @@
+__pycache__/
+*.py[cod]
+.env
+node_modules/
+output/
+outputs/
+dashboard-server.log
+dashboard-server.err
+

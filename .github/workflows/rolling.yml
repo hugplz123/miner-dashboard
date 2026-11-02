@@ -1,0 +1,78 @@
+name: Refresh rolling seven-day dashboard
+
+on:
+  schedule:
+    # 09:20 Asia/Shanghai. GitHub cron uses UTC.
+    - cron: "20 1 * * *"
+  workflow_dispatch:
+    inputs:
+      end_date:
+        description: "End date YYYYMMDD; leave blank for yesterday"
+        required: false
+        type: string
+      jobs:
+        description: "Concurrent site exports"
+        required: false
+        default: "3"
+        type: string
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - id: pages
+        uses: actions/configure-pages@v5
+
+      - name: Build current seven days
+        env:
+          DB_HOST: ${{ secrets.DB_HOST }}
+          DB_PORT: ${{ secrets.DB_PORT }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          INPUT_END_DATE: ${{ inputs.end_date }}
+          INPUT_JOBS: ${{ inputs.jobs || '3' }}
+          PAGES_BASE_URL: ${{ steps.pages.outputs.base_url }}
+        shell: bash
+        run: |
+          args=(
+            --days 7
+            --jobs "$INPUT_JOBS"
+            --skip-existing
+            --preserve-destination
+            --published-base-url "$PAGES_BASE_URL"
+          )
+          if [[ -n "$INPUT_END_DATE" ]]; then
+            args+=(--date "$INPUT_END_DATE")
+          fi
+          python run_rolling.py "${args[@]}"
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dashboard
+
+      - id: deployment
+        uses: actions/deploy-pages@v4
+

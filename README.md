@@ -1,0 +1,123 @@
+# 矿箱负荷看板
+
+当前版本覆盖除 Koye01 外的 5 个场地，默认展示最新完整一天，并保留最近 7 天趋势。
+
+| 场地 | data_center_id |
+| --- | --- |
+| Blossom01 | `c0449798c6494a49bac60a6d924c9115` |
+| May01 | `abca092860704393bcf1070462510797` |
+| Nimrod01 | `1c675cf08cea473393c3cfa01976b065` |
+| Nimrod02 | `2da96783a4bf449a90f81d4d9c5fc884` |
+| WhiteOak01 | `435d3ecd71a34488a17c5f788a0f25ca` |
+
+当前样本日期为 `2026-10-26` 至 `2026-11-01`，共 15,189 个矿箱小时。
+最新一天的 90 个矿箱保留算力组、型号、档位和单机下钻，共 478,314 条单机小时记录。
+完整 `dashboard/` 约 36 MB，其中七日矿箱汇总约 23 MB，最新一天压缩明细约 14 MB。
+
+## 本地预览
+
+```powershell
+python -m http.server 8765 --bind 127.0.0.1 --directory dashboard
+```
+
+打开 `http://127.0.0.1:8765/`。这个地址只适用于本机或屏幕共享；
+其他同事访问需要把 `dashboard/` 发布到静态托管。
+
+## 每日更新
+
+```powershell
+.\update-dashboard.ps1
+```
+
+脚本默认保留 7 天，只查询缺失的最新一天。已经发布或已在本地的历史 6 天不会重复查库，
+因此每日运行时间不是七日全量查询的 7 倍。重新汇总本地缓存约需 1 至 2 分钟，
+数据库查询时间取决于 VPN、连接速度和当天数据量。
+
+首次生成或需要重建某一天时：
+
+```powershell
+python sample_export.py --date 20261101 --all-sites --output-dir outputs/detail-cache/20261101
+python build_dashboard.py --days 7 --end-date 20261101 --detail-date 20261101
+```
+
+只用已有源缓存重新聚合，不重新连库：
+
+```powershell
+python sample_export.py --date 20261101 --all-sites --reuse --output-dir outputs/detail-cache/20261101
+python build_dashboard.py --days 7 --end-date 20261101 --detail-date 20261101
+```
+
+数据库连接复用相邻项目 `..\功耗数据更新\config.toml` 的只读配置，不在本仓库保存密码。
+
+## 发布方式
+
+推荐先生成静态文件，再发布到 GitHub Pages。页面和 JSON 都是静态资源，
+浏览器不会直连数据库，也不会暴露数据库账号。
+
+仓库内已准备：
+
+- `.github/workflows/pages.yml`：推送 `dashboard/**` 后发布页面。
+- `.github/workflows/rolling.yml`：北京时间每天 09:20 查询昨天并滚动发布七日数据。
+- `run_rolling.py`：恢复仍在线的前 6 天，只导出缺失的最新一天。
+- `update-dashboard.ps1`：本机手动执行同一套滚动更新。
+
+首次发布需要在 GitHub 仓库的 `Settings > Pages > Source` 选择 `GitHub Actions`，
+并配置 Actions Secrets：
+
+| Secret | 内容 |
+| --- | --- |
+| `DB_HOST` | 数据库主机 |
+| `DB_PORT` | 数据库端口 |
+| `DB_USER` | 只读账号 |
+| `DB_PASSWORD` | 只读密码 |
+
+如果数据库只允许固定 IP，GitHub 托管 Runner 会因出口 IP 变化而无法连接。
+这种情况下应把手动任务或 GitHub Self-hosted Runner 放在能访问数据库的内网服务器，
+生成静态文件后再同步到 Pages 或普通 Web 服务器。
+
+GitHub Pages 适合每日复盘。它不是实时功率看板：页面展示的是最近一次成功导出的小时数据。
+如果会议或填负荷必须看当前小时，需要提高导出频率，或单独建设带鉴权的数据库 API。
+
+## 计算口径
+
+每行代表一个矿箱的一个小时。先按 `场地ID + hour + IP` 去重单机记录，
+解析 `worker_location` 数组，将每个元素按第一个 `-` 前的矿箱 ID 关联
+`t_data_center_ware_house`，再计算矿箱指标。
+
+| 指标 | 计算方式 |
+| --- | --- |
+| 矿机数量 | 本矿箱本小时去重 IP 数 |
+| 实际功率(kW) | `SUM(avg_power) / 1000` |
+| 理论功率(kW) | 外部理论功率表按场地名和标准化矿箱号匹配 |
+| 负载率 | `实际功率 / 理论功率` |
+| 容量差额(kW) | `理论功率 - 实际功率`，保留负值 |
+| 可填负荷(kW) | `MAX(容量差额, 0)`，未扣安全裕度和供电约束 |
+| 算力组 | `client_miner_template_id` 关联 `t_client_miner_template.id/name` |
+| 型号 / 档位 | 按单机记录的 `model` / `work_mode` 分组计数 |
+| 平均算力(TH/s) | 去重记录的 `AVG(avg_hashrate) / 10^12` |
+| 单机功耗比(W/TH) | `avg_power / (avg_hashrate / 10^12)` |
+| 整体功耗比(W/TH) | 可计算样本的 `SUM(avg_power) / SUM(avg_hashrate / 10^12)` |
+| 功耗比有效样本 | 算力和功耗均大于 0 的记录数 |
+| 拒绝率 | 最大、最小、平均；平均为单机等权平均 |
+| 温度 | 源值按华氏度处理，再转换为摄氏度 |
+
+`worker_location` 同一小时可能出现多个值。解析后同一矿箱的位置会去重；
+如果出现多个不同矿箱或无法匹配，记录异常，不把同一台矿机重复计入不同矿箱。
+重复 `场地ID + hour + IP` 时优先保留 `gmt_modified` 最新的记录，
+再按 `gmt_create`、`id` 降序确定。
+
+温度字段中 `0` 表示部分场地没有有效采集。Blossom01 最新一天的 57,600 条记录、
+May01 的 57,432 条记录都是 `0`，如果直接按 `0°F` 转换会得到 `-17.8°C`，
+所以导出时将 `temperature <= 0` 视为缺失，不对无样本矿箱生成虚假温度。
+
+跨小时相加得到的是矿机小时记录数，不是全天独立物理矿机数。
+跨小时平均是记录加权平均，不应当作全天能耗统计。
+
+## 验证
+
+```powershell
+node verify_dashboard.cjs
+```
+
+验证器会检查七日汇总、各层台数、功耗比可计算样本、温度缺失标记、
+最新一天压缩明细、历史日期禁用下钻、场地和日期切换、趋势图以及手机布局。
