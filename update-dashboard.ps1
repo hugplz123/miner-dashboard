@@ -3,7 +3,8 @@ param(
     [int]$Jobs = 3,
     [string]$Date = "",
     [switch]$NoPublish,
-    [switch]$SkipVerify
+    [switch]$SkipVerify,
+    [switch]$Refresh
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,6 +14,9 @@ Set-Location -LiteralPath $PSScriptRoot
 $arguments = @("run_rolling.py", "--days", $Days, "--jobs", $Jobs, "--skip-existing")
 if ($Date) {
     $arguments += @("--date", $Date)
+}
+if ($Refresh) {
+    $arguments += "--refresh-latest"
 }
 
 & python @arguments

@@ -50,6 +50,12 @@ python -m http.server 8765 --bind 127.0.0.1 --directory dashboard
 .\update-dashboard.ps1 -SkipVerify
 ```
 
+如果当天数据第一次生成时还不完整，只重新查询并覆盖最新一天：
+
+```powershell
+.\update-dashboard.ps1 -Refresh
+```
+
 脚本默认保留 7 天，只查询缺失的最新一天。已经发布或已在本地的历史 6 天不会重复查库，
 因此每日运行时间不是七日全量查询的 7 倍。重新汇总本地缓存约需 1 至 2 分钟，
 数据库查询时间取决于 VPN、连接速度和当天数据量。

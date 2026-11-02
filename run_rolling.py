@@ -142,7 +142,8 @@ def import_published_days(destination, summary_root, dates):
 
 def run(config, end_date, days, summary_root, detail_root, destination,
         skip_existing=False, theoretical_power=DEFAULT_THEORETICAL_POWER_PATH,
-        jobs=1, preserve_destination=False, published_base_url=None):
+        jobs=1, preserve_destination=False, published_base_url=None,
+        refresh_latest=False):
     dates = recent_dates(end_date, days)
     date_keys = {date.strftime("%Y%m%d") for date in dates}
     latest_key = dates[-1].strftime("%Y%m%d")
@@ -165,7 +166,9 @@ def run(config, end_date, days, summary_root, detail_root, destination,
                 detail_root / date_key
                 / f"{site.lower()}_{date_key}_dashboard.json"
             )
-            if skip_existing and summary_path.exists() and (
+            if skip_existing and not (latest and refresh_latest) and (
+                summary_path.exists()
+            ) and (
                 not latest or detail_path.exists()
             ):
                 print(f"Reuse {site} {date_key}", flush=True)
@@ -253,6 +256,10 @@ def main():
         help="Reuse complete cached dates while bootstrapping",
     )
     parser.add_argument(
+        "--refresh-latest", action="store_true",
+        help="Re-export the latest date even when a cached copy exists",
+    )
+    parser.add_argument(
         "--jobs", type=int, default=1,
         help="Number of site/date exports to run concurrently",
     )
@@ -286,6 +293,7 @@ def main():
         args.jobs,
         args.preserve_destination,
         args.published_base_url,
+        args.refresh_latest,
     )
 
 
