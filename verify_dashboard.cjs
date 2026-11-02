@@ -7,6 +7,7 @@ const zlib = require("zlib");
 const ROOT = path.resolve(__dirname);
 const DATA = path.join(ROOT, "dashboard", "data");
 const DASHBOARD_URL = process.env.DASHBOARD_URL || "http://127.0.0.1:8765/";
+const DATA_ONLY = process.argv.includes("--data-only");
 const EXPECTED_SITES = [
   "Blossom01", "May01", "Nimrod01", "Nimrod02", "WhiteOak01",
 ];
@@ -246,11 +247,15 @@ async function verifyBrowser(catalog) {
 
 (async () => {
   const { catalog, catalogRows, machineHours } = verifyPublishedData();
-  await verifyBrowser(catalog);
+  if (!DATA_ONLY) {
+    await verifyBrowser(catalog);
+  }
   console.log(
     `PASS: ${catalog.sites.length} sites, ${catalog.available_dates.length} days, ` +
     `${catalogRows} warehouse hours, ${machineHours} latest-day machine hours; ` +
-    `data, lazy gzip details, charts, site/date switching and mobile layout`,
+    (DATA_ONLY
+      ? "data and lazy gzip details"
+      : "data, lazy gzip details, charts, site/date switching and mobile layout"),
   );
 })().catch(error => {
   console.error(error);

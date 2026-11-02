@@ -25,13 +25,37 @@ python -m http.server 8765 --bind 127.0.0.1 --directory dashboard
 
 ## 每日更新
 
+推荐直接双击根目录的 `update-dashboard.cmd`。它会依次完成：
+
+1. 从数据库查询昨天，并复用本地仍保留的前 6 天；
+2. 重建近 7 天静态数据并做一致性校验；
+3. 提交 `dashboard/` 的更新并推送到 GitHub；
+4. 由 GitHub Pages 自动发布，通常一两分钟后线上生效。
+
+也可以在 PowerShell 中运行：
+
 ```powershell
 .\update-dashboard.ps1
+```
+
+只更新本地、不提交和推送：
+
+```powershell
+.\update-dashboard.ps1 -NoPublish
+```
+
+跳过数据校验：
+
+```powershell
+.\update-dashboard.ps1 -SkipVerify
 ```
 
 脚本默认保留 7 天，只查询缺失的最新一天。已经发布或已在本地的历史 6 天不会重复查库，
 因此每日运行时间不是七日全量查询的 7 倍。重新汇总本地缓存约需 1 至 2 分钟，
 数据库查询时间取决于 VPN、连接速度和当天数据量。
+
+本地更新不要求公网 IP。运行更新的电脑只要能访问数据库并连接 GitHub 即可。
+GitHub 收到新的 `dashboard/` 提交后会自动重新发布静态页面，浏览器不会连接数据库。
 
 首次生成或需要重建某一天时：
 

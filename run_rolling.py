@@ -8,7 +8,7 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from build_dashboard import build
+from build_dashboard import atomic_replace, build
 from sample_export import DEFAULT_THEORETICAL_POWER_PATH, SITES, export
 
 
@@ -71,7 +71,7 @@ def download_published_assets(base_url, dates, destination):
         temporary = target.with_suffix(target.suffix + ".tmp")
         temporary.parent.mkdir(parents=True, exist_ok=True)
         temporary.write_bytes(content)
-        temporary.replace(target)
+        atomic_replace(temporary, target)
         print(f"Restored {target.name}", flush=True)
 
 

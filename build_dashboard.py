@@ -5,6 +5,7 @@ import gzip
 import json
 import re
 import shutil
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -17,6 +18,19 @@ DETAIL_PATTERN = re.compile(
 )
 DETAIL_LEVELS = ("template_rows", "model_rows", "work_mode_rows", "machine_rows")
 PRIVATE_FIELDS = {"mac", "source_id", "worker_location"}
+
+
+def atomic_replace(source, target, attempts=10):
+    source = Path(source)
+    target = Path(target)
+    for attempt in range(attempts):
+        try:
+            source.replace(target)
+            return
+        except PermissionError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(0.2 * (attempt + 1))
 
 
 def iso_date(value):
@@ -120,9 +134,23 @@ def daily_totals(site_id, site_name, date, rows, warehouse_count):
 def write_gzip_json(path, payload):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    with gzip.open(temporary, "wt", encoding="utf-8", compresslevel=9) as stream:
-        json.dump(payload, stream, ensure_ascii=False, separators=(",", ":"))
-    temporary.replace(path)
+    encoded = json.dumps(
+        payload, ensure_ascii=False, separators=(",", ":")
+    ).encode("utf-8")
+    # A fixed gzip timestamp keeps unchanged data byte-identical across builds.
+    with temporary.open("wb") as raw:
+        with gzip.GzipFile(
+            filename="", fileobj=raw, mode="wb", compresslevel=9, mtime=0
+        ) as stream:
+            stream.write(encoded)
+    atomic_replace(temporary, path)
+
+
+def source_exported_at(paths):
+    newest = max(Path(path).stat().st_mtime for path in paths)
+    return dt.datetime.fromtimestamp(
+        newest, tz=dt.timezone.utc
+    ).isoformat()
 
 
 def remove_children(directory, keep):
@@ -224,7 +252,7 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
             json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
             encoding="utf-8",
         )
-        temporary.replace(days_dir / name)
+        atomic_replace(temporary, days_dir / name)
 
     bundles = defaultdict(lambda: {"hours": {}})
     for (center_id, hour, warehouse_id), payload in details.items():
@@ -300,7 +328,10 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
         "latest_date": iso_date(dates[-1]),
         "available_dates": [iso_date(date) for date in dates],
         "detail_dates": sorted({iso_date(detail_date)}) if bundles else [],
-        "exported_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "exported_at": source_exported_at([
+            *selected.values(),
+            *detail_sources.values(),
+        ]),
         "sites": site_rows,
         "warehouses": sorted(
             warehouses.values(),
@@ -318,7 +349,7 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
         json.dumps(catalog, ensure_ascii=False, separators=(",", ":")),
         encoding="utf-8",
     )
-    temporary.replace(data_dir / "catalog.json")
+    atomic_replace(temporary, data_dir / "catalog.json")
 
     remove_children(days_dir, day_files)
     expected_detail_dirs = {path.split("/", 1)[0] for path in detail_paths}
