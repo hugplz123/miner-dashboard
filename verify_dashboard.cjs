@@ -150,7 +150,19 @@ async function verifyBrowser(catalog) {
   fs.mkdirSync(path.join(ROOT, "outputs", "dashboard-check"), {
     recursive: true,
   });
-  const browser = await chromium.launch({ headless: true, channel: "msedge" });
+  const browserArgs = ["--disable-ipv6"];
+  if (process.env.DASHBOARD_HOST_IP) {
+    const host = new URL(DASHBOARD_URL).hostname;
+    browserArgs.push(
+      `--host-resolver-rules=MAP ${host} ${process.env.DASHBOARD_HOST_IP}`,
+    );
+  }
+  const browser = await chromium.launch({
+    headless: true,
+    channel: "msedge",
+    // Some networks advertise IPv6 for GitHub Pages without a working route.
+    args: browserArgs,
+  });
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
     const errors = [];
@@ -161,8 +173,11 @@ async function verifyBrowser(catalog) {
     });
     page.on("request", request => requests.push(request.url()));
 
-    await page.goto(DASHBOARD_URL, { waitUntil: "networkidle" });
-    await page.waitForSelector(".warehouse-card");
+    await page.goto(DASHBOARD_URL, {
+      waitUntil: "domcontentloaded",
+      timeout: 60000,
+    });
+    await page.waitForSelector(".warehouse-card", { timeout: 60000 });
 
     const whiteoak = catalog.sites.find(site =>
       site.data_center_name === "WhiteOak01"
@@ -228,18 +243,29 @@ async function verifyBrowser(catalog) {
     const racePage = await browser.newPage({
       viewport: { width: 1440, height: 1000 },
     });
-    const latestDayFile = catalog.latest_date.replaceAll("-", "");
-    await racePage.route(`**/data/days/${latestDayFile}.json*`, async route => {
-      await new Promise(resolve => setTimeout(resolve, 2500));
-      await route.continue();
-    });
-    await racePage.goto(DASHBOARD_URL, { waitUntil: "domcontentloaded" });
-    await racePage.waitForFunction(() =>
-      document.querySelectorAll("#date option").length === 7);
     const raceSite = catalog.sites.find(site =>
       site.data_center_name === "May01"
     ) || catalog.sites[0];
     const raceDate = catalog.available_dates.at(-2);
+    const latestDayFile = catalog.latest_date.replaceAll("-", "");
+    const raceDayFile = raceDate.replaceAll("-", "");
+    await racePage.route("**/data/days/*.json*", async route => {
+      const url = route.request().url();
+      const isLatest = url.includes(`/${latestDayFile}.json`);
+      const isRaceDay = url.includes(`/${raceDayFile}.json`);
+      if (!isLatest && !isRaceDay) {
+        await route.continue();
+        return;
+      }
+      if (isLatest) await new Promise(resolve => setTimeout(resolve, 2500));
+      await route.fulfill({
+        path: path.join(DATA, "days", `${isLatest ? latestDayFile : raceDayFile}.json`),
+        contentType: "application/json",
+      });
+    });
+    await racePage.goto(DASHBOARD_URL, { waitUntil: "domcontentloaded" });
+    await racePage.waitForFunction(() =>
+      document.querySelectorAll("#date option").length === 7);
     await racePage.selectOption("#site", raceSite.data_center_id);
     await racePage.selectOption("#date", raceDate);
     await racePage.selectOption("#hour", `${raceDate.replaceAll("-", "")}10`);
