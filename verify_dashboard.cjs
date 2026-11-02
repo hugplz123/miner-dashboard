@@ -6,6 +6,7 @@ const zlib = require("zlib");
 
 const ROOT = path.resolve(__dirname);
 const DATA = path.join(ROOT, "dashboard", "data");
+const DASHBOARD_URL = process.env.DASHBOARD_URL || "http://127.0.0.1:8765/";
 const EXPECTED_SITES = [
   "Blossom01", "May01", "Nimrod01", "Nimrod02", "WhiteOak01",
 ];
@@ -159,7 +160,7 @@ async function verifyBrowser(catalog) {
     });
     page.on("request", request => requests.push(request.url()));
 
-    await page.goto("http://127.0.0.1:8765/", { waitUntil: "networkidle" });
+    await page.goto(DASHBOARD_URL, { waitUntil: "networkidle" });
     await page.waitForSelector(".warehouse-card");
 
     const whiteoak = catalog.sites.find(site =>
