@@ -68,11 +68,9 @@ function populateHours() {
 async function loadDay(date) {
   if (dayCache.has(date)) return dayCache.get(date);
   const version = encodeURIComponent(catalog.exported_at || catalog.latest_date);
-  const promise = fetch(`data/days/${compactDate(date)}.json?v=${version}`)
-    .then(response => {
-      if (!response.ok) throw Error("按日汇总读取失败");
-      return response.json();
-    });
+  const promise = fetchGzipJson(
+    `data/days/${compactDate(date)}.json.gz?v=${version}`
+  );
   dayCache.set(date, promise);
   try {
     return await promise;
@@ -80,6 +78,14 @@ async function loadDay(date) {
     dayCache.delete(date);
     throw error;
   }
+}
+
+function setLoading(active, text = "") {
+  const loading = $("loading");
+  loading.hidden = !active;
+  if (text) $("loading-text").textContent = text;
+  $("cards").setAttribute("aria-busy", active ? "true" : "false");
+  document.querySelector("main").classList.toggle("is-loading", active);
 }
 
 function modelSummary(models) {
@@ -343,6 +349,8 @@ function showTooltip(event) {
 
 async function selectDate(date, preferredHour) {
   const token = ++dayRequestVersion;
+  const previousDate = selectedDate;
+  const previousHour = $("hour").value;
   selectedDate = date;
   $("date").value = date;
   populateHours();
@@ -350,15 +358,27 @@ async function selectDate(date, preferredHour) {
     const candidate = [...hours].reverse().find(hour => hour <= preferredHour);
     if (candidate) $("hour").value = candidate;
   }
+  $("meta").textContent = `${catalog.date_range.start} 至 ${catalog.date_range.end} · 正在读取 ${date} · ${currentSite().warehouse_count} 个矿箱`;
+  setLoading(true, `正在加载 ${date} 的数据，请稍候…`);
   try {
     const payload = await loadDay(date);
     if (token !== dayRequestVersion) return;
     dayData = payload;
+    setLoading(false);
     render();
   } catch (error) {
     if (token !== dayRequestVersion) return;
+    if (previousDate) {
+      selectedDate = previousDate;
+      $("date").value = previousDate;
+      populateHours();
+      if (previousHour && hours.includes(Number(previousHour))) {
+        $("hour").value = previousHour;
+      }
+    }
+    setLoading(false);
     $("meta").textContent = "当日数据读取失败";
-    $("notice").textContent = "日期数据暂时无法读取，请稍后重新选择该日期。";
+    $("notice").textContent = "日期数据加载超时或暂时无法读取，请检查网络后重新选择该日期。";
     console.error(error);
   }
 }
@@ -370,6 +390,7 @@ function bindChart() {
   svg.addEventListener("click", async event => {
     const target = event.target.closest("[data-chart-key]");
     if (!target) return;
+    $("chart-tooltip").hidden = true;
     if (trendMode === "daily") {
       await selectDate(target.dataset.chartKey, Number($("hour").value));
     } else {
@@ -391,20 +412,31 @@ function bindChart() {
   });
 }
 
-async function fetchGzipJson(url) {
-  const response = await fetch(url);
-  if (!response.ok) throw Error("明细读取失败");
-  const buffer = await response.arrayBuffer();
-  const bytes = new Uint8Array(buffer);
-  if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) {
-    return JSON.parse(new TextDecoder().decode(bytes));
+async function fetchGzipJson(url, timeoutMs = 45000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { signal: controller.signal });
+    if (!response.ok) throw Error("数据读取失败");
+    const buffer = await response.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    if (bytes[0] !== 0x1f || bytes[1] !== 0x8b) {
+      return JSON.parse(new TextDecoder().decode(bytes));
+    }
+    if (typeof DecompressionStream === "undefined") {
+      throw Error("浏览器不支持压缩数据读取");
+    }
+    const stream = new Blob([buffer]).stream()
+      .pipeThrough(new DecompressionStream("gzip"));
+    return new Response(stream).json();
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw Error("数据加载超时，请重试");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
-  if (typeof DecompressionStream === "undefined") {
-    throw Error("浏览器不支持压缩明细读取");
-  }
-  const stream = new Blob([buffer]).stream()
-    .pipeThrough(new DecompressionStream("gzip"));
-  return new Response(stream).json();
 }
 
 async function openDetail(id) {
@@ -521,6 +553,7 @@ bindChart();
     if (!dates.length) throw Error("没有日期数据");
     await selectDate(selectedDate);
   } catch (error) {
+    setLoading(false);
     $("meta").textContent = "看板数据读取失败";
     $("notice").textContent = "尚无可用数据，请检查导出及发布结果。";
     console.error(error);

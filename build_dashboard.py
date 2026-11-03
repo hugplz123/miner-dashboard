@@ -245,14 +245,9 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
                 ),
             ),
         }
-        name = f"{date}.json"
+        name = f"{date}.json.gz"
         day_files.add(name)
-        temporary = days_dir / f"{name}.tmp"
-        temporary.write_text(
-            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
-            encoding="utf-8",
-        )
-        atomic_replace(temporary, days_dir / name)
+        write_gzip_json(days_dir / name, payload)
 
     bundles = defaultdict(lambda: {"hours": {}})
     for (center_id, hour, warehouse_id), payload in details.items():

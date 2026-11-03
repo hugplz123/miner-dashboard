@@ -57,6 +57,21 @@ input { min-width: 0; }
   font-size: 12px; color: #725a26; border-left: 3px solid #c5a04b;
   background: #faf7ed; padding: 10px 13px; margin: 10px 0 22px; line-height: 1.7;
 }
+.loading {
+  display: flex; align-items: center; gap: 9px; margin: -10px 0 18px;
+  padding: 9px 12px; color: #145b4b; background: #eaf6f2;
+  border: 1px solid #c2e2d8; font-size: 12px; font-weight: 600;
+}
+.loading[hidden] { display: none; }
+.loading-spinner {
+  width: 14px; height: 14px; border: 2px solid #86b8aa;
+  border-right-color: transparent; border-radius: 50%;
+  animation: loading-spin .75s linear infinite;
+}
+main.is-loading #metrics, main.is-loading .trend, main.is-loading .warehouse-grid {
+  opacity: .58; transition: opacity .16s ease;
+}
+@keyframes loading-spin { to { transform: rotate(360deg); } }
 .metrics {
   display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
   border-top: 1px solid var(--line); border-bottom: 1px solid var(--line);
@@ -128,7 +143,8 @@ input { min-width: 0; }
 .chart-mean { stroke: #9caaa6; stroke-width: 1; stroke-dasharray: 4 4; }
 .chart-selection { stroke: #246f5d; stroke-width: 1.3; stroke-dasharray: 4 3; opacity: .7; }
 .chart-current { fill: #fff; stroke: var(--green); stroke-width: 2.5; }
-.chart-hit { fill: transparent; cursor: pointer; }
+.chart-hit { fill: transparent; cursor: pointer; outline: none; }
+.chart-hit:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
 .chart-point { fill: var(--green); pointer-events: none; opacity: .68; }
 .chart-hit:hover + .chart-point, .chart-hit:focus + .chart-point { r: 4.2; opacity: 1; }
 .chart-hour { fill: #657476; font-size: 10px; cursor: pointer; }

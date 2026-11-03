@@ -1,6 +1,7 @@
 """Export yesterday and rebuild a seven-day static dashboard."""
 import argparse
 import datetime as dt
+import gzip
 import json
 import shutil
 import urllib.error
@@ -45,16 +46,19 @@ def download_published_assets(base_url, dates, destination):
     data_dir = Path(destination) / "data"
     days_dir = data_dir / "days"
     days_dir.mkdir(parents=True, exist_ok=True)
-    assets = [
-        ("catalog.json", data_dir / "catalog.json"),
-        *[
+    assets = [("catalog.json", data_dir / "catalog.json")]
+    for date in dates:
+        date_key = date.strftime("%Y%m%d")
+        assets.extend([
             (
-                f"days/{date.strftime('%Y%m%d')}.json",
-                days_dir / f"{date.strftime('%Y%m%d')}.json",
-            )
-            for date in dates
-        ],
-    ]
+                f"days/{date_key}.json.gz",
+                days_dir / f"{date_key}.json.gz",
+            ),
+            (
+                f"days/{date_key}.json",
+                days_dir / f"{date_key}.json",
+            ),
+        ])
     for relative, target in assets:
         url = f"{base_url}/data/{relative}"
         request = urllib.request.Request(
@@ -86,10 +90,15 @@ def import_published_days(destination, summary_root, dates):
 
     for date in dates:
         date_key = date.strftime("%Y%m%d")
-        day_path = data_dir / "days" / f"{date_key}.json"
-        if not day_path.exists():
+        gzip_path = data_dir / "days" / f"{date_key}.json.gz"
+        plain_path = data_dir / "days" / f"{date_key}.json"
+        if gzip_path.exists():
+            with gzip.open(gzip_path, "rt", encoding="utf-8") as stream:
+                payload = json.load(stream)
+        elif plain_path.exists():
+            payload = json.loads(plain_path.read_text(encoding="utf-8"))
+        else:
             continue
-        payload = json.loads(day_path.read_text(encoding="utf-8"))
         rows_by_site = {}
         for row in payload.get("warehouse_rows") or []:
             rows_by_site.setdefault(row["data_center_id"], []).append(row)

@@ -19,6 +19,10 @@ function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
+function readGzipJson(file) {
+  return JSON.parse(zlib.gunzipSync(fs.readFileSync(file)).toString("utf8"));
+}
+
 function close(actual, expected, tolerance = 1e-7) {
   if (actual == null && expected == null) return true;
   if (!Number.isFinite(actual) || !Number.isFinite(expected)) return false;
@@ -52,9 +56,9 @@ function verifyPublishedData() {
   const rowsByDate = new Map();
   let allRows = 0;
   for (const date of catalog.available_dates) {
-    const file = path.join(DATA, "days", `${date.replaceAll("-", "")}.json`);
+    const file = path.join(DATA, "days", `${date.replaceAll("-", "")}.json.gz`);
     assert(fs.existsSync(file), `missing day file: ${file}`);
-    const day = readJson(file);
+    const day = readGzipJson(file);
     assert.equal(day.schema_version, "3.0");
     assert.equal(day.date, date);
     assert(Array.isArray(day.warehouse_rows) && day.warehouse_rows.length);
@@ -198,6 +202,14 @@ async function verifyBrowser(catalog) {
     assert((await page.locator("#trend-summary").textContent()).includes("当前小时"));
     await page.locator("[data-trend-mode='daily']").click();
 
+    const chartDate = whiteoak.available_dates[2];
+    await page.locator("#trend .chart-hit").nth(2).click();
+    await page.waitForFunction(date =>
+      document.querySelector("#meta")?.textContent.includes(`当前 ${date}`),
+      chartDate);
+    assert.equal(await page.locator("#date").inputValue(), chartDate);
+    assert(await page.locator("#loading").isHidden());
+
     const firstDate = whiteoak.available_dates[0];
     await page.selectOption("#date", firstDate);
     await page.waitForFunction(date =>
@@ -259,13 +271,14 @@ async function verifyBrowser(catalog) {
       }
       if (isLatest) await new Promise(resolve => setTimeout(resolve, 2500));
       await route.fulfill({
-        path: path.join(DATA, "days", `${isLatest ? latestDayFile : raceDayFile}.json`),
-        contentType: "application/json",
+        path: path.join(DATA, "days", `${isLatest ? latestDayFile : raceDayFile}.json.gz`),
+        contentType: "application/gzip",
       });
     });
     await racePage.goto(DASHBOARD_URL, { waitUntil: "domcontentloaded" });
     await racePage.waitForFunction(() =>
       document.querySelectorAll("#date option").length === 7);
+    await racePage.waitForSelector("#loading:not([hidden])");
     await racePage.selectOption("#site", raceSite.data_center_id);
     await racePage.selectOption("#date", raceDate);
     await racePage.selectOption("#hour", `${raceDate.replaceAll("-", "")}10`);
@@ -278,6 +291,7 @@ async function verifyBrowser(catalog) {
     assert(!racePower.trim().startsWith("0"),
       "a late day response overwrote the newly selected day");
     assert.equal(await racePage.locator("#date").inputValue(), raceDate);
+    assert(await racePage.locator("#loading").isHidden());
     await racePage.close();
 
     await page.setViewportSize({ width: 390, height: 844 });
