@@ -10,6 +10,34 @@ param(
 $ErrorActionPreference = "Stop"
 Set-Location -LiteralPath $PSScriptRoot
 
+function Resolve-Git {
+    $command = Get-Command git.exe -ErrorAction SilentlyContinue
+    if ($command) { return $command.Source }
+    $candidates = @(
+        "$env:ProgramFiles\Git\cmd\git.exe",
+        "${env:ProgramFiles(x86)}\Git\cmd\git.exe",
+        "$env:LOCALAPPDATA\Programs\Git\cmd\git.exe",
+        "$env:USERPROFILE\.cache\codex-runtimes\codex-primary-runtime\dependencies\native\git\cmd\git.exe"
+    )
+    foreach ($candidate in $candidates) {
+        if (Test-Path -LiteralPath $candidate) { return $candidate }
+    }
+    throw "Git was not found. Install Git for Windows or make git.exe available in PATH."
+}
+
+function Push-Dashboard($git) {
+    & $git push
+    if ($LASTEXITCODE -eq 0) { return }
+
+    Write-Host "Standard push failed; retrying through a GitHub endpoint..." `
+        -ForegroundColor Yellow
+    foreach ($ip in @("140.82.112.4", "140.82.113.4", "140.82.114.4")) {
+        & $git -c "http.curloptResolve=github.com:443:$ip" push
+        if ($LASTEXITCODE -eq 0) { return }
+    }
+    throw "Dashboard was committed locally, but git push failed."
+}
+
 # Only the newest day is queried; the other days are reused from outputs/.
 $arguments = @("run_rolling.py", "--days", $Days, "--jobs", $Jobs, "--skip-existing")
 if ($Date) {
@@ -36,23 +64,21 @@ if (-not $SkipVerify) {
 }
 
 if (-not $NoPublish) {
-    & git add -- dashboard
+    $git = Resolve-Git
+    & $git add -- dashboard
     if ($LASTEXITCODE -ne 0) {
         throw "Could not stage dashboard files"
     }
 
-    & git diff --cached --quiet -- dashboard
+    & $git diff --cached --quiet -- dashboard
     $hasDashboardChanges = $LASTEXITCODE -ne 0
     if ($hasDashboardChanges) {
-        & git commit -m "Refresh dashboard through $latestDate" -- dashboard
+        & $git commit -m "Refresh dashboard through $latestDate" -- dashboard
         if ($LASTEXITCODE -ne 0) {
             throw "Could not commit dashboard files"
         }
 
-        & git push
-        if ($LASTEXITCODE -ne 0) {
-            throw "Dashboard was committed locally, but git push failed"
-        }
+        Push-Dashboard $git
         Write-Host "Published: https://hugplz123.github.io/miner-dashboard/" `
             -ForegroundColor Green
     }
