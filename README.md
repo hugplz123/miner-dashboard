@@ -87,7 +87,8 @@ python build_dashboard.py --days 7 --end-date 20261101 --detail-date 20261101
 仓库内已准备：
 
 - `.github/workflows/pages.yml`：推送 `dashboard/**` 后发布页面。
-- `.github/workflows/rolling.yml`：北京时间每天 09:20 查询昨天并滚动发布七日数据。
+- `.github/workflows/rolling.yml`：供能访问内网数据库的 Self-hosted Runner 手动刷新；
+  GitHub 托管 Runner 无法连入本机 VPN，因此未启用云端定时触发。
 - `run_rolling.py`：恢复仍在线的前 6 天，只导出缺失的最新一天。
 - `update-dashboard.ps1`：本机手动执行同一套滚动更新。
 
@@ -104,6 +105,9 @@ python build_dashboard.py --days 7 --end-date 20261101 --detail-date 20261101
 如果数据库只允许固定 IP，GitHub 托管 Runner 会因出口 IP 变化而无法连接。
 这种情况下应把手动任务或 GitHub Self-hosted Runner 放在能访问数据库的内网服务器，
 生成静态文件后再同步到 Pages 或普通 Web 服务器。
+
+当前每日更新使用本机 `update-dashboard.cmd`，云端只负责发布已经提交到
+`dashboard/` 的静态文件。这样不会因为 GitHub Runner 连不上数据库而每天产生失败邮件。
 
 GitHub Pages 适合每日复盘。它不是实时功率看板：页面展示的是最近一次成功导出的小时数据。
 如果会议或填负荷必须看当前小时，需要提高导出频率，或单独建设带鉴权的数据库 API。

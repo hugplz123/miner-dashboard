@@ -1,9 +1,8 @@
 name: Refresh rolling seven-day dashboard
 
 on:
-  schedule:
-    # 09:20 Asia/Shanghai. GitHub cron uses UTC.
-    - cron: "20 1 * * *"
+  # GitHub-hosted runners cannot reach the database while the local VPN is
+  # required. Keep this workflow manual for a future self-hosted runner.
   workflow_dispatch:
     inputs:
       end_date:
