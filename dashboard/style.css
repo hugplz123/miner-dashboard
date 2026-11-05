@@ -40,7 +40,7 @@ main { max-width: 1700px; padding: 28px 32px; margin: auto; }
   color: #6d7a79; font-size: 11px; font-weight: 600; line-height: 1;
 }
 .title-controls select { min-width: 162px; border-color: #d6dfdc; background-color: #fbfcfc; }
-.title-controls label:nth-child(2) select { min-width: 188px; }
+.title-controls label:nth-child(2) select { min-width: 258px; }
 .title-controls label:last-child select { min-width: 188px; }
 h1 { font-size: 25px; margin: 0 0 7px; }
 h2 { font-size: 16px; margin: 0; }

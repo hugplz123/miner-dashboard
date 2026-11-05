@@ -58,6 +58,22 @@ function coverageLabel(observed, expected = expectedHoursPerDay) {
   return `${observed ?? "—"}/${expected ?? expectedHoursPerDay} 小时`;
 }
 
+function coverageParts(daily, site = currentSite()) {
+  const observed = daily?.hours_with_data ?? daily?.hours?.length;
+  const expected = daily?.expected_hours ?? expectedHoursPerDay;
+  const totalWarehouses = daily?.warehouse_count ?? site?.warehouse_count;
+  const completeWarehouses = daily?.complete_warehouse_count
+    ?? Object.values(daily?.warehouse_hour_counts || {})
+      .filter(count => count >= expected).length;
+  return { observed, expected, completeWarehouses, totalWarehouses };
+}
+
+function siteCoverageLabel(daily, site = currentSite()) {
+  const { observed, expected, completeWarehouses, totalWarehouses } =
+    coverageParts(daily, site);
+  return `运行 ${coverageLabel(observed, expected)} · 完整 ${completeWarehouses ?? "—"}/${totalWarehouses ?? "—"} 箱`;
+}
+
 function populateSiteSelector() {
   $("site").innerHTML = sites.map(site =>
     `<option value="${esc(site.data_center_id)}">${esc(site.data_center_name)}</option>`
@@ -70,9 +86,9 @@ function populateDates(preferredDate) {
   dates = [...(currentSite()?.available_dates || [])];
   $("date").innerHTML = dates.map(date => {
     const daily = dailyFor(date);
-    const observed = daily?.hours_with_data ?? daily?.hours?.length;
-    const expected = daily?.expected_hours ?? expectedHoursPerDay;
-    return `<option value="${esc(date)}">${esc(date)} · ${esc(coverageLabel(observed, expected))}</option>`;
+    const { observed, expected, completeWarehouses, totalWarehouses } =
+      coverageParts(daily);
+    return `<option value="${esc(date)}">${esc(date)} · 运行 ${esc(coverageLabel(observed, expected))} · 完整 ${esc(completeWarehouses ?? "—")}/${esc(totalWarehouses ?? "—")} 箱</option>`;
   }).join("");
   if (!dates.length) return;
   $("date").value = preferredDate && dates.includes(preferredDate)
@@ -133,6 +149,7 @@ function detailAvailable() {
 function renderCoverage(daily, site) {
   const expected = daily?.expected_hours ?? expectedHoursPerDay;
   const observed = daily?.hours_with_data ?? daily?.hours?.length ?? hours.length;
+  const { completeWarehouses, totalWarehouses } = coverageParts(daily, site);
   const partialWarehouses = daily?.incomplete_warehouse_count || 0;
   const missingWarehouses = daily?.warehouses_without_data || 0;
   const minimumHours = daily?.min_warehouse_hours;
@@ -141,7 +158,7 @@ function renderCoverage(daily, site) {
       && partialWarehouses === 0 && missingWarehouses === 0
   );
   const details = [
-    `${selectedDate} 场地小计使用 ${coverageLabel(observed, expected)}的实际数据。`,
+    `${selectedDate} 场地 ${coverageLabel(observed, expected)}有数据，${completeWarehouses}/${totalWarehouses} 个矿箱完整。`,
   ];
   if (partialWarehouses) {
     details.push(
@@ -243,7 +260,7 @@ function render() {
   $("brand-name").textContent = site.data_center_name;
   $("trend-title").textContent = `${site.data_center_name} 功耗比趋势`;
   $("trend").setAttribute("aria-label", `${site.data_center_name} 功耗比趋势`);
-  $("meta").textContent = `${catalog.date_range.start} 至 ${catalog.date_range.end} · 当前 ${selectedDate} · 数据覆盖 ${coverageLabel(observedHours, expectedHours)} · ${site.warehouse_count} 个矿箱`;
+  $("meta").textContent = `${catalog.date_range.start} 至 ${catalog.date_range.end} · 当前 ${selectedDate} · ${siteCoverageLabel(daily, site)} · ${site.warehouse_count} 个矿箱`;
   document.title = `${site.data_center_name} · 矿箱负荷`;
   renderCoverage(daily, site);
   $("metrics").innerHTML = metric("上报实际功率", fmt(actualPower), "kW", "矿机小时平均功耗之和")
@@ -322,7 +339,7 @@ function renderTrend() {
     trendMode === "daily" && !item.complete
   ).length;
   $("trend-meta").textContent = trendMode === "daily"
-    ? `样本功耗加权 · W/TH${incompleteDays ? " · * 未覆盖 24 小时" : ""}`
+    ? `样本功耗加权 · W/TH${incompleteDays ? " · * 存在小时或矿箱缺口" : ""}`
     : `样本功耗加权 · W/TH · 当日覆盖 ${coverageLabel(hours.length)}`;
   const selectedKey = trendMode === "daily" ? selectedDate : String($("hour").value);
   const numeric = series.map(item => item.value).filter(value => value != null);
@@ -362,10 +379,7 @@ function renderTrend() {
     : "当日小时均值";
   const selectedCoverage = trendMode === "daily"
     && selected?.detail?.expected_hours
-    ? ` · 覆盖 ${coverageLabel(
-      selected.detail.hours_with_data,
-      selected.detail.expected_hours,
-    )}`
+    ? ` · ${siteCoverageLabel(selected.detail)}`
     : "";
   $("trend-summary").innerHTML = `
     <span class="trend-stat current">
@@ -397,7 +411,7 @@ function renderTrend() {
     const center = points[index];
     const dateText = trendMode === "daily" ? item.key : hourLabel(Number(item.key));
     const coverage = trendMode === "daily" && detail.expected_hours
-      ? ` · 覆盖 ${coverageLabel(detail.hours_with_data, detail.expected_hours)}`
+      ? ` · ${siteCoverageLabel(detail)}`
       : "";
     return `<rect class="chart-hit" x="${x(index) - hitWidth / 2}" y="${pad.top}" width="${hitWidth}" height="${plotH}" tabindex="0" role="button" data-chart-key="${esc(item.key)}" aria-label="${esc(dateText)}，功耗比 ${fmt(value)} W/TH${esc(coverage)}，点击查看"><title>${esc(dateText)} · ${fmt(value)} W/TH${esc(coverage)} · 样本 ${detail.power_ratio_sample_count ?? "—"}/${detail.machine_count ?? "—"}</title></rect>
       ${center ? `<circle class="chart-point" cx="${center[0]}" cy="${center[1]}" r="3"/>` : ""}`;
@@ -433,7 +447,7 @@ function showTooltip(event) {
   const detail = item.detail || {};
   const dateText = trendMode === "daily" ? item.key : hourLabel(Number(item.key));
   const coverage = trendMode === "daily" && detail.expected_hours
-    ? ` · 覆盖 ${coverageLabel(detail.hours_with_data, detail.expected_hours)}`
+    ? ` · ${siteCoverageLabel(detail)}`
     : "";
   tooltip.innerHTML = `<strong>${fmt(item.value)} W/TH</strong><span>${esc(dateText)}${esc(coverage)}<br>功耗比样本 ${detail.power_ratio_sample_count ?? "—"} / ${detail.machine_count ?? "—"}</span>`;
   const x = pad.left + (series.length === 1 ? plotW / 2 : plotW * index / (series.length - 1));
@@ -456,9 +470,7 @@ async function selectDate(date, preferredHour) {
     if (candidate) $("hour").value = candidate;
   }
   const daily = dailyFor(date);
-  const observed = daily?.hours_with_data ?? daily?.hours?.length ?? hours.length;
-  const expected = daily?.expected_hours ?? expectedHoursPerDay;
-  $("meta").textContent = `${catalog.date_range.start} 至 ${catalog.date_range.end} · 正在读取 ${date} · 数据覆盖 ${coverageLabel(observed, expected)} · ${currentSite().warehouse_count} 个矿箱`;
+  $("meta").textContent = `${catalog.date_range.start} 至 ${catalog.date_range.end} · 正在读取 ${date} · ${siteCoverageLabel(daily)} · ${currentSite().warehouse_count} 个矿箱`;
   setLoading(true, `正在加载 ${date} 的数据，请稍候…`);
   try {
     const payload = await loadDay(date);

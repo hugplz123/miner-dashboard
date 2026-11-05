@@ -239,12 +239,18 @@ async function verifyBrowser(catalog) {
     );
     assert(latestDaily, "latest WhiteOak daily coverage missing");
     assert((await page.locator("#date option:checked").textContent()).includes(
-      `${latestDaily.hours_with_data}/${latestDaily.expected_hours} 小时`
+      `运行 ${latestDaily.hours_with_data}/${latestDaily.expected_hours} 小时`
+    ));
+    assert((await page.locator("#date option:checked").textContent()).includes(
+      `完整 ${latestDaily.complete_warehouse_count}/${latestDaily.warehouse_count} 箱`
     ));
     assert.equal(await page.locator("#coverage").getAttribute("data-complete"),
       String(latestDaily.is_fully_complete));
     assert((await page.locator("#coverage").textContent()).includes(
-      `${latestDaily.hours_with_data}/${latestDaily.expected_hours}`
+      `场地 ${latestDaily.hours_with_data}/${latestDaily.expected_hours} 小时有数据`
+    ));
+    assert((await page.locator("#coverage").textContent()).includes(
+      `${latestDaily.complete_warehouse_count}/${latestDaily.warehouse_count} 个矿箱完整`
     ));
     const expectedCoverageWarnings = latestDaily.incomplete_warehouse_count
       + latestDaily.warehouses_without_data;
@@ -316,12 +322,12 @@ async function verifyBrowser(catalog) {
         document.querySelector("#brand-name")?.textContent === name,
       partialSite.data_center_name);
       assert((await page.locator("#meta").textContent()).includes(
-        `数据覆盖 ${partialDaily.hours_with_data}/${partialDaily.expected_hours} 小时`
+        `运行 ${partialDaily.hours_with_data}/${partialDaily.expected_hours} 小时`
       ));
       assert.equal(await page.locator("#coverage").getAttribute("data-complete"),
         "false");
       assert((await page.locator("#coverage").textContent()).includes(
-        `场地小计使用 ${partialDaily.hours_with_data}/${partialDaily.expected_hours}`
+        `场地 ${partialDaily.hours_with_data}/${partialDaily.expected_hours} 小时有数据`
       ));
     }
     await page.selectOption("#site", nimrod.data_center_id);
