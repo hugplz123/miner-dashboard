@@ -40,7 +40,7 @@ main { max-width: 1700px; padding: 28px 32px; margin: auto; }
   color: #6d7a79; font-size: 11px; font-weight: 600; line-height: 1;
 }
 .title-controls select { min-width: 162px; border-color: #d6dfdc; background-color: #fbfcfc; }
-.title-controls label:nth-child(2) select { min-width: 128px; }
+.title-controls label:nth-child(2) select { min-width: 188px; }
 .title-controls label:last-child select { min-width: 188px; }
 h1 { font-size: 25px; margin: 0 0 7px; }
 h2 { font-size: 16px; margin: 0; }
@@ -57,6 +57,18 @@ input { min-width: 0; }
   font-size: 12px; color: #725a26; border-left: 3px solid #c5a04b;
   background: #faf7ed; padding: 10px 13px; margin: 10px 0 22px; line-height: 1.7;
 }
+.coverage-note {
+  display: flex; align-items: baseline; gap: 9px; margin: 12px 0 0;
+  padding: 10px 13px; border: 1px solid #d9e2df; border-left-width: 4px;
+  background: #fff; font-size: 12px; line-height: 1.6;
+}
+.coverage-note strong { flex: 0 0 auto; font-size: 12px; }
+.coverage-note span { color: var(--muted); }
+.coverage-note.complete { border-left-color: var(--green); background: #f4faf8; }
+.coverage-note.complete strong { color: var(--green); }
+.coverage-note.incomplete { border-left-color: var(--amber); background: #fcf8ed; }
+.coverage-note.incomplete strong { color: var(--amber); }
+.coverage-note + .notice { margin-top: 10px; }
 .loading {
   display: flex; align-items: center; gap: 9px; margin: -10px 0 18px;
   padding: 9px 12px; color: #145b4b; background: #eaf6f2;
@@ -243,10 +255,22 @@ main.is-loading #metrics, main.is-loading .trend, main.is-loading .warehouse-gri
 }
 .mode-row .mode-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mode-row b { color: #536762; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.card-foot { margin-top: auto; padding-top: 10px; display: flex; justify-content: space-between; gap: 8px; color: #879290; font-size: 10px; }
+.card-foot {
+  margin-top: auto; padding-top: 10px; display: flex; flex-wrap: wrap;
+  justify-content: space-between; gap: 5px 8px; color: #879290; font-size: 10px;
+}
+.warehouse-hour-coverage {
+  color: #41635b; background: #edf4f1; border-radius: 3px;
+  padding: 1px 5px; font-weight: 600;
+}
+.warehouse-hour-coverage.warn {
+  color: #865f13; background: #fbf0d8; font-weight: 650;
+}
 .card-foot .warn { color: var(--amber); }
 .missing-card { min-height: 270px; display: grid; place-items: center; color: #8b9694; background: #f8faf9; }
 .missing-card .card-head { position: absolute; top: 14px; left: 16px; right: 16px; }
+.missing-coverage { padding: 3px 7px; background: #edf2f0; border-radius: 3px; }
+.missing-coverage.warn { color: #865f13; background: #fbf0d8; }
 
 .sub { display: block; color: #7b8786; font-size: 11px; font-weight: 400; margin-top: 4px; }
 .bad { color: var(--red); }

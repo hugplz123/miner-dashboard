@@ -18,6 +18,7 @@ DETAIL_PATTERN = re.compile(
 )
 DETAIL_LEVELS = ("template_rows", "model_rows", "work_mode_rows", "machine_rows")
 PRIVATE_FIELDS = {"mac", "source_id", "worker_location"}
+EXPECTED_HOURS_PER_DAY = 24
 
 
 def atomic_replace(source, target, attempts=10):
@@ -109,13 +110,49 @@ def sanitize_detail_row(row):
 def daily_totals(site_id, site_name, date, rows, warehouse_count):
     valid_power = numeric_sum(rows, "power_ratio_valid_power_sum_w")
     valid_hashrate = numeric_sum(rows, "power_ratio_valid_hashrate_sum_ths")
+    hours = sorted({int(row["hour"]) for row in rows})
+    warehouse_hours = defaultdict(set)
+    for row in rows:
+        warehouse_hours[row["warehouse_id"]].add(int(row["hour"]))
+    warehouse_hour_counts = {
+        warehouse_id: len(values)
+        for warehouse_id, values in sorted(warehouse_hours.items())
+    }
+    complete_warehouse_count = sum(
+        count == EXPECTED_HOURS_PER_DAY
+        for count in warehouse_hour_counts.values()
+    )
     return {
         "data_center_id": site_id,
         "data_center_name": site_name,
         "date": iso_date(date),
+        "hours": hours,
+        "hours_with_data": len(hours),
+        "expected_hours": EXPECTED_HOURS_PER_DAY,
+        "hours_coverage_ratio": (
+            len(hours) / EXPECTED_HOURS_PER_DAY if EXPECTED_HOURS_PER_DAY else None
+        ),
+        "is_complete": len(hours) == EXPECTED_HOURS_PER_DAY,
+        "is_fully_complete": (
+            len(hours) == EXPECTED_HOURS_PER_DAY
+            and complete_warehouse_count == warehouse_count
+        ),
         "warehouse_rows": len(rows),
         "warehouses_with_data": len({row["warehouse_id"] for row in rows}),
         "warehouse_count": warehouse_count,
+        "complete_warehouse_count": complete_warehouse_count,
+        "incomplete_warehouse_count": sum(
+            count < EXPECTED_HOURS_PER_DAY
+            for count in warehouse_hour_counts.values()
+        ),
+        "warehouses_without_data": max(
+            0, warehouse_count - len(warehouse_hour_counts)
+        ),
+        "min_warehouse_hours": (
+            min(warehouse_hour_counts.values())
+            if warehouse_hour_counts else None
+        ),
+        "warehouse_hour_counts": warehouse_hour_counts,
         "machine_count": int(numeric_sum(rows, "machine_count")),
         "power_ratio_sample_count": int(
             numeric_sum(rows, "power_ratio_sample_count")
@@ -284,6 +321,7 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
         site_dates = []
         site_daily = []
         hours_by_date = {}
+        warehouse_hours_by_date = {}
         for date in dates:
             rows = [
                 row for row in rows_by_date[date]
@@ -294,6 +332,13 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
             site_dates.append(iso_date(date))
             hours = sorted({row["hour"] for row in rows})
             hours_by_date[iso_date(date)] = hours
+            warehouse_hours = defaultdict(set)
+            for row in rows:
+                warehouse_hours[row["warehouse_id"]].add(row["hour"])
+            warehouse_hours_by_date[iso_date(date)] = {
+                warehouse_id: sorted(values)
+                for warehouse_id, values in sorted(warehouse_hours.items())
+            }
             total = daily_totals(
                 center_id, center_name, date, rows, len(site_warehouses)
             )
@@ -309,6 +354,7 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
             }),
             "available_dates": site_dates,
             "hours_by_date": hours_by_date,
+            "warehouse_hours_by_date": warehouse_hours_by_date,
             "daily_summary": site_daily,
         })
 

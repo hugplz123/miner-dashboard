@@ -14,6 +14,7 @@ const EXPECTED_SITES = [
 const DETAIL_LEVELS = [
   "template_rows", "model_rows", "work_mode_rows", "machine_rows",
 ];
+const EXPECTED_HOURS_PER_DAY = 24;
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -85,7 +86,41 @@ function verifyPublishedData() {
     const rows = rowsByDate.get(daily.date).filter(row =>
       row.data_center_id === daily.data_center_id
     );
+    const expectedHours = [...new Set(rows.map(row => row.hour))]
+      .sort((a, b) => a - b);
+    const warehouseCounts = {};
+    for (const row of rows) {
+      if (!warehouseCounts[row.warehouse_id]) warehouseCounts[row.warehouse_id] = 0;
+      warehouseCounts[row.warehouse_id] += 1;
+    }
     assert.equal(rows.length, daily.warehouse_rows);
+    assert.deepEqual(daily.hours, expectedHours);
+    assert.equal(daily.hours_with_data, expectedHours.length);
+    assert.equal(daily.expected_hours, EXPECTED_HOURS_PER_DAY);
+    assert.equal(daily.is_complete,
+      expectedHours.length === EXPECTED_HOURS_PER_DAY);
+    assert.equal(daily.is_fully_complete,
+      expectedHours.length === EXPECTED_HOURS_PER_DAY
+        && Object.values(warehouseCounts).length === daily.warehouse_count
+        && Object.values(warehouseCounts)
+          .every(count => count === EXPECTED_HOURS_PER_DAY));
+    assert(close(
+      daily.hours_coverage_ratio,
+      expectedHours.length / EXPECTED_HOURS_PER_DAY,
+    ));
+    assert.deepEqual(daily.warehouse_hour_counts, warehouseCounts);
+    assert.equal(daily.complete_warehouse_count,
+      Object.values(warehouseCounts)
+        .filter(count => count === EXPECTED_HOURS_PER_DAY).length);
+    assert.equal(daily.incomplete_warehouse_count,
+      Object.values(warehouseCounts)
+        .filter(count => count < EXPECTED_HOURS_PER_DAY).length);
+    assert.equal(daily.warehouses_with_data,
+      Object.keys(warehouseCounts).length);
+    assert.equal(daily.warehouses_without_data,
+      daily.warehouse_count - Object.keys(warehouseCounts).length);
+    assert.equal(daily.min_warehouse_hours,
+      Math.min(...Object.values(warehouseCounts)));
     assert.equal(sum(rows, "machine_count"), daily.machine_count);
     assert(close(sum(rows, "actual_power_kw"), daily.actual_power_kw));
     assert(close(
@@ -116,7 +151,10 @@ function verifyPublishedData() {
     assert.equal(bundle.schema_version, "3.0");
     assert.equal(bundle.data_center_id, centerId);
     assert.equal(bundle.warehouse_id, warehouseId);
-    assert.equal(Object.keys(bundle.hours).length, 24);
+    assert.deepEqual(
+      Object.keys(bundle.hours).sort(),
+      [...new Set(rows.map(row => String(row.hour)))].sort(),
+    );
 
     for (const row of rows) {
       const detail = bundle.hours[String(row.hour)];
@@ -196,9 +234,27 @@ async function verifyBrowser(catalog) {
     assert.equal(await page.locator("#trend .chart-hit").count(), 7);
     assert.equal(await page.locator("#trend .chart-selection").count(), 1);
     assert(!requests.some(url => /\/data\/[0-9a-f]{32}_\d{10}_/.test(url)));
+    const latestDaily = whiteoak.daily_summary.find(item =>
+      item.date === catalog.latest_date
+    );
+    assert(latestDaily, "latest WhiteOak daily coverage missing");
+    assert((await page.locator("#date option:checked").textContent()).includes(
+      `${latestDaily.hours_with_data}/${latestDaily.expected_hours} 小时`
+    ));
+    assert.equal(await page.locator("#coverage").getAttribute("data-complete"),
+      String(latestDaily.is_fully_complete));
+    assert((await page.locator("#coverage").textContent()).includes(
+      `${latestDaily.hours_with_data}/${latestDaily.expected_hours}`
+    ));
+    const expectedCoverageWarnings = latestDaily.incomplete_warehouse_count
+      + latestDaily.warehouses_without_data;
+    assert.equal(await page.locator(
+      ".warehouse-hour-coverage.warn, .missing-coverage.warn"
+    ).count(), expectedCoverageWarnings);
 
     await page.locator("[data-trend-mode='hourly']").click();
-    assert.equal(await page.locator("#trend .chart-hit").count(), 24);
+    assert.equal(await page.locator("#trend .chart-hit").count(),
+      latestDaily.hours_with_data);
     assert((await page.locator("#trend-summary").textContent()).includes("当前小时"));
     await page.locator("[data-trend-mode='daily']").click();
 
@@ -245,6 +301,29 @@ async function verifyBrowser(catalog) {
     const nimrod = catalog.sites.find(site =>
       site.data_center_name === "Nimrod01"
     );
+    const partialSite = catalog.sites.find(site => {
+      const daily = site.daily_summary.find(item =>
+        item.date === catalog.latest_date
+      );
+      return daily && !daily.is_complete;
+    });
+    if (partialSite) {
+      const partialDaily = partialSite.daily_summary.find(item =>
+        item.date === catalog.latest_date
+      );
+      await page.selectOption("#site", partialSite.data_center_id);
+      await page.waitForFunction(name =>
+        document.querySelector("#brand-name")?.textContent === name,
+      partialSite.data_center_name);
+      assert((await page.locator("#meta").textContent()).includes(
+        `数据覆盖 ${partialDaily.hours_with_data}/${partialDaily.expected_hours} 小时`
+      ));
+      assert.equal(await page.locator("#coverage").getAttribute("data-complete"),
+        "false");
+      assert((await page.locator("#coverage").textContent()).includes(
+        `场地小计使用 ${partialDaily.hours_with_data}/${partialDaily.expected_hours}`
+      ));
+    }
     await page.selectOption("#site", nimrod.data_center_id);
     await page.waitForFunction(name =>
       document.querySelector("#brand-name")?.textContent === name, "Nimrod01");
