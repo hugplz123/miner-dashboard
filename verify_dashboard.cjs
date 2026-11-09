@@ -378,14 +378,16 @@ async function verifyBrowser(catalog) {
     assert.equal(await page.locator(".warehouse-card").count(),
       whiteoakActiveIds.size);
     assert.equal(await page.locator("#metrics .metric").count(), 6);
-    assert.equal(await page.locator(".lark-power-panel").count(),
-      whiteoakActiveIds.size);
+    assert.equal(await page.locator(".warehouse-card .lark-power-panel").count(), 0);
     assert.equal(await page.locator(".lark-power-panel.unmatched").count(), 0);
-    assert.equal(await page.locator(".power-block .reporting").count(),
-      await page.locator(".power-block").count());
-    assert.equal(await page.locator(".capacity-row").count(),
-      whiteoakActiveIds.size * 2);
-    assert(await page.locator(".peak-sparkline").count() > 0);
+    assert.equal(await page.locator(".warehouse-card .capacity-row").count(), 0);
+    const boxesWithData = await page.locator(
+      ".warehouse-card:not(.missing-card)",
+    ).count();
+    assert.equal(await page.locator(".warehouse-card .card-glance").count(),
+      boxesWithData);
+    assert.equal(await page.locator(".warehouse-card .peak-summary").count(),
+      boxesWithData);
     assert.equal(await page.locator(".peak-strip").count(), 0);
     assert((await page.locator("#metrics").textContent()).includes(
       "Lark 在架功率"
@@ -456,13 +458,42 @@ async function verifyBrowser(catalog) {
       !best || row.actual_power_kw > best.actual_power_kw ? row : best,
     null);
     assert(peak, "peak warehouse hour not found");
+    const peakDetail = readGzipJson(path.join(
+      DATA,
+      "details",
+      whiteoak.data_center_id,
+      latestDate.replaceAll("-", ""),
+      `${peakId}.json.gz`,
+    ));
+    const peakMachine = peakDetail.hours[String(peak.hour)].machine_rows
+      .reduce((best, machine) =>
+        !best || machine.avg_power_w > best.avg_power_w ? machine : best,
+      null);
+    assert(peakMachine, "peak machine not found");
     await peakButton.click();
     await page.waitForSelector("#detail-content tbody tr");
     assert.equal(await page.locator("#hour").inputValue(), String(peak.hour));
     assert(await page.locator("#detail").evaluate(dialog => dialog.open));
+    assert.equal(
+      await page.locator('[data-level="machine_rows"]')
+        .getAttribute("aria-selected"),
+      "true",
+    );
     assert((await page.locator("#detail-meta").textContent()).includes(
       `${String(peak.hour).slice(8)}:00`
     ));
+    assert((await page.locator(".peak-machine-callout").textContent())
+      .includes(peakMachine.model));
+    assert((await page.locator(".peak-machine-callout").textContent())
+      .includes(peakMachine.ip));
+    assert.equal(await page.locator("#detail-content tbody tr").first()
+      .getAttribute("class"), "peak-machine-row");
+    assert((await page.locator("#detail-content tbody tr").first().textContent())
+      .includes(peakMachine.ip));
+    await page.screenshot({
+      path: path.join(ROOT, "outputs", "dashboard-check", "peak-machine.png"),
+      fullPage: true,
+    });
     await page.locator("#close").click();
 
     const detailRequestsBefore = requests.length;
@@ -475,6 +506,7 @@ async function verifyBrowser(catalog) {
     assert(detailRequest, "detail request not found");
     assert(/\.json\.gz(?:\?|$)/.test(detailRequest));
     assert((await page.locator("#detail-meta").textContent()).includes("WhiteOak01"));
+    assert.equal(await page.locator("#detail-capacity .capacity-row").count(), 2);
     for (const tab of ["model_rows", "work_mode_rows", "machine_rows"]) {
       await page.locator(`[data-level="${tab}"]`).click();
       assert(await page.locator("#detail-content tbody tr").count() > 0);
@@ -532,10 +564,13 @@ async function verifyBrowser(catalog) {
     const missingCard = page.locator(
       `[data-warehouse-id="${missingCapacity.warehouse_id}"]`,
     );
-    assert((await missingCard.locator(".lark-panel-head").textContent())
+    await missingCard.locator("[data-detail-id]").click();
+    await page.waitForSelector("#detail-capacity .lark-power-panel");
+    assert((await page.locator("#detail-capacity .lark-panel-head").textContent())
       .includes("字段缺失"));
-    assert((await missingCard.locator(".lark-power-panel").textContent())
+    assert((await page.locator("#detail-capacity .lark-power-panel").textContent())
       .includes("容量字段缺失"));
+    await page.locator("#close").click();
 
     const nimrod02 = catalog.sites.find(site =>
       site.data_center_name === "Nimrod02"
@@ -626,6 +661,16 @@ async function verifyBrowser(catalog) {
       path: path.join(ROOT, "outputs", "dashboard-check", "mobile.png"),
       fullPage: true,
     });
+    await page.locator(".peak-action").first().click();
+    await page.waitForSelector(".peak-machine-callout");
+    assert(await page.evaluate(() =>
+      document.documentElement.scrollWidth <= innerWidth
+    ));
+    await page.screenshot({
+      path: path.join(ROOT, "outputs", "dashboard-check", "mobile-detail.png"),
+      fullPage: true,
+    });
+    await page.locator("#close").click();
     assert.deepEqual(errors, []);
   } finally {
     await browser.close();
