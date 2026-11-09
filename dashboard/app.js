@@ -38,16 +38,6 @@ function finite(value) {
   return value != null && Number.isFinite(Number(value));
 }
 
-function powerDelta(value, theory) {
-  return finite(value) && finite(theory) ? Number(value) - Number(theory) : null;
-}
-
-function deltaText(value, unit = "kW") {
-  if (!finite(value)) return "未匹配";
-  const prefix = value > 0 ? "+" : "";
-  return `${prefix}${fmt(value)} ${unit}`;
-}
-
 function syncTimeLabel(value) {
   if (!value) return "未记录";
   const date = new Date(value);
@@ -193,6 +183,20 @@ function modelSummary(models) {
   return { sorted, visible, rest };
 }
 
+function workModeSummary(modes) {
+  const sorted = [...(modes || [])].sort((a, b) => b.machine_count - a.machine_count);
+  const visible = sorted.slice(0, 4);
+  const rest = sorted.slice(4);
+  if (rest.length) {
+    visible.push({
+      work_mode: `其他 ${rest.length} 种`,
+      machine_count: rest.reduce((total, item) => total + item.machine_count, 0),
+      rest: true,
+    });
+  }
+  return { sorted, visible };
+}
+
 function detailAvailable() {
   return (catalog.detail_dates || []).includes(selectedDate);
 }
@@ -235,27 +239,36 @@ function larkPanelHTML(row) {
   const presentFields = capacityFields.filter(finite).length;
   const status = presentFields === capacityFields.length
     ? "已匹配" : presentFields ? "部分缺失" : "字段缺失";
-  const mountedDelta = powerDelta(
-    lark.mounted_power_kw, row.theoretical_power_kw,
-  );
-  const reservedDelta = powerDelta(
-    lark.reserved_power_kw, row.theoretical_power_kw,
-  );
-  const deltaClass = value => !finite(value)
-    ? "muted" : value > 0 ? "over" : "under";
+  const theory = row.theoretical_power_kw;
+  const capacityRow = (label, value) => {
+    if (!finite(value)) {
+      return `<div class="capacity-row missing"><span>${label}</span><strong>容量字段缺失</strong></div>`;
+    }
+    if (!finite(theory) || Number(theory) <= 0) {
+      return `<div class="capacity-row"><span>${label}</span><strong>${fmt(value)}<small>kW</small></strong><em>缺少理论功率</em></div>`;
+    }
+    const width = Math.max(0, Math.min(100, Number(value) / Number(theory) * 100));
+    const margin = Number(theory) - Number(value);
+    const over = margin < 0;
+    return `<div class="capacity-row${over ? " over" : ""}">
+      <div class="capacity-copy">
+        <span>${label}</span>
+        <strong>${fmt(value)}<small>kW</small></strong>
+        <em>${over ? `超理论 ${fmt(Math.abs(margin))}` : `余量 ${fmt(margin)}`} kW</em>
+      </div>
+      <div class="capacity-track" title="${label} ${fmt(value)} kW，理论功率 ${fmt(theory)} kW">
+        <i style="width:${width}%"></i>
+      </div>
+    </div>`;
+  };
   return `<div class="lark-power-panel">
-    <div class="lark-panel-head"><span>Lark 容量快照</span><b>${status}</b></div>
-    <div class="lark-power-grid">
-      <div class="lark-power-item">
-        <span>在架功率</span>
-        <strong>${fmt(lark.mounted_power_kw)}<small>kW</small></strong>
-        <em class="${deltaClass(mountedDelta)}">${finite(lark.mounted_power_kw) ? `较理论 ${esc(deltaText(mountedDelta))}` : "容量字段缺失"}</em>
-      </div>
-      <div class="lark-power-item">
-        <span>占位功率</span>
-        <strong>${fmt(lark.reserved_power_kw)}<small>kW</small></strong>
-        <em class="${deltaClass(reservedDelta)}">${finite(lark.reserved_power_kw) ? `较理论 ${esc(deltaText(reservedDelta))}` : "容量字段缺失"}</em>
-      </div>
+    <div class="lark-panel-head">
+      <span>容量刻度 · 理论 ${finite(theory) ? `${fmt(theory)} kW` : "未配置"}</span>
+      <b>${status}</b>
+    </div>
+    <div class="capacity-grid">
+      ${capacityRow("在架", lark.mounted_power_kw)}
+      ${capacityRow("占位", lark.reserved_power_kw)}
     </div>
     <div class="lark-panel-foot">
       <span>单机理论平均 ${fmt(lark.unit_theoretical_power_kw, 2)} kW</span>
@@ -264,21 +277,70 @@ function larkPanelHTML(row) {
   </div>`;
 }
 
+function powerSeries(warehouseId) {
+  const site = currentSite();
+  if (!dayData || !site) return [];
+  return dayData.warehouse_rows
+    .filter(row =>
+      row.data_center_id === site.data_center_id
+      && row.warehouse_id === warehouseId
+      && finite(row.actual_power_kw)
+    )
+    .sort((a, b) => a.hour - b.hour);
+}
+
+function powerSparkline(series, peak) {
+  if (!series.length) return "";
+  const width = 240;
+  const height = 34;
+  const padX = 4;
+  const padY = 5;
+  const values = series.map(row => Number(row.actual_power_kw));
+  const minimum = Math.min(...values);
+  const maximum = Math.max(...values);
+  const range = maximum - minimum;
+  const pointFor = row => {
+    const hourIndex = Number(String(row.hour).slice(-2));
+    const x = padX + hourIndex / 23 * (width - padX * 2);
+    const y = range
+      ? height - padY - (Number(row.actual_power_kw) - minimum) / range * (height - padY * 2)
+      : height / 2;
+    return { x, y };
+  };
+  const points = series.map(row => {
+    const { x, y } = pointFor(row);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const peakPoint = peak ? pointFor(peak) : null;
+  return `<svg class="peak-sparkline" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none" aria-hidden="true">
+    <line class="peak-baseline" x1="${padX}" y1="${height - 2}" x2="${width - padX}" y2="${height - 2}"></line>
+    <polyline class="peak-sparkline-line" vector-effect="non-scaling-stroke" points="${points}"></polyline>
+    ${peakPoint ? `<circle class="peak-sparkline-dot" cx="${peakPoint.x.toFixed(1)}" cy="${peakPoint.y.toFixed(1)}" r="2.4"></circle>` : ""}
+  </svg>`;
+}
+
 function peakHTML(row) {
   const peak = dailyPeak(row.warehouse_id);
   if (!peak) {
-    return `<div class="peak-strip"><div><span>当日峰值</span><strong>—</strong></div></div>`;
+    return `<div class="peak-panel empty"><span>当日功率峰值</span><strong>暂无有效功率数据</strong></div>`;
   }
+  const series = powerSeries(row.warehouse_id);
   const action = detailAvailable()
-    ? `<button type="button" class="peak-action" data-peak-id="${esc(row.warehouse_id)}" title="切换到峰值小时并查看矿机明细">峰值矿机<i data-lucide="arrow-up-right"></i></button>`
-    : `<button type="button" disabled title="历史日期只保留矿箱汇总">历史仅汇总</button>`;
-  return `<div class="peak-strip">
-    <div class="peak-value">
-      <span>当日峰值</span>
-      <strong>${fmt(peak.actual_power_kw)}<small>kW</small></strong>
-      <em>${esc(String(peak.hour).slice(-2))}:00</em>
+    ? `<button type="button" class="peak-action" data-peak-id="${esc(row.warehouse_id)}" title="切换到峰值小时并查看矿机明细">查看峰值矿机<i data-lucide="arrow-up-right"></i></button>`
+    : `<button type="button" disabled title="历史日期只保留矿箱汇总">峰值明细仅最新一天</button>`;
+  return `<div class="peak-panel">
+    <div class="peak-head">
+      <div class="peak-copy">
+        <span>当日峰值</span>
+        <strong>${fmt(peak.actual_power_kw)}<small>kW</small></strong>
+        <em>${esc(String(peak.hour).slice(-2))}:00</em>
+      </div>
+      ${action}
     </div>
-    ${action}
+    <div class="peak-trend">
+      ${powerSparkline(series, peak)}
+      <div class="peak-axis"><span>00</span><span>12</span><span>23</span></div>
+    </div>
   </div>`;
 }
 
@@ -297,50 +359,57 @@ function cardHTML(row) {
   const overload = hasTheory && row.load_ratio > 1;
   const width = Math.max(0, Math.min(100, (row.load_ratio || 0) * 100));
   const models = modelSummary(row.models);
-  const stack = models.visible.map((item, index) =>
-    `<i style="width:${row.machine_count ? item.machine_count / row.machine_count * 100 : 0}%;background:${palette[index % palette.length]}" title="${esc(item.model || "未记录")}：${item.machine_count} 台"></i>`
-  ).join("");
   const tags = models.visible.map((item, index) =>
     `<span class="model-tag" title="${esc(item.model || "未记录")}：${item.machine_count} 台"><i style="background:${palette[index % palette.length]}"></i>${esc(item.model || "未记录")} <b>${item.machine_count}</b></span>`
   ).join("");
-  const modes = [...(row.work_modes || [])].sort((a, b) => b.machine_count - a.machine_count);
-  const modeRows = modes.map((item, index) => `
-    <div class="mode-row" style="--mode-color:${palette[index % palette.length]}" title="${esc(item.work_mode || "未记录")}：${item.machine_count} 台">
-      <span><i></i><span class="mode-name">${esc(item.work_mode || "未记录")}</span></span>
-      <b>${item.machine_count} 台</b>
-    </div>`).join("");
+  const modes = workModeSummary(row.work_modes);
+  const modeTags = modes.visible.map((item, index) =>
+    `<span class="mode-tag" style="--mode-color:${palette[index % palette.length]}" title="${esc(item.work_mode || "未记录")}：${item.machine_count} 台"><i></i>${esc(item.work_mode || "未记录")} <b>${item.machine_count}</b></span>`
+  ).join("");
   const sampleCoverage = ratioCoverage(row);
-  const surplus = row.capacity_difference_kw == null
-    ? "—" : fmt(row.available_capacity_kw);
-  const theoryFact = hasTheory
-    ? `<div class="card-fact"><div class="fact-label">理论余量</div><div class="fact-value ${row.capacity_difference_kw < 0 ? "deficit" : "surplus"}">${surplus}<small>kW</small></div></div>`
-    : "";
+  const installedMachines = row.lark_power?.mounted_machine_count;
+  const reportingIncomplete = finite(installedMachines)
+    && Number(installedMachines) > Number(row.machine_count);
+  const reportingLabel = finite(installedMachines)
+    ? `上报 ${row.machine_count} / 在架 ${fmt(installedMachines, 0)} 台`
+    : `当前上报 ${row.machine_count} 台`;
+  const statusText = reportingIncomplete
+    ? "上报覆盖不足" : hasTheory ? (overload ? "超理论功率" : "理论功率内") : "实际数据";
   const details = detailAvailable()
     ? `<button type="button" data-detail-id="${esc(row.warehouse_id)}" aria-label="查看 ${esc(row.warehouse_name)} 明细">详情<i data-lucide="arrow-up-right"></i></button>`
     : `<button type="button" disabled title="历史日期仅保留矿箱汇总，明细保留最新一天">仅汇总</button>`;
   return `<article class="warehouse-card${overload ? " overload" : ""}${hasTheory ? "" : " actual-only"}" data-warehouse-id="${esc(row.warehouse_id)}">
     <div class="card-head">
-      <div class="card-title"><strong>${esc(row.warehouse_name)}</strong><span class="status">${hasTheory ? (overload ? "超理论功率" : "理论功率内") : "实际数据"}</span></div>
+      <div class="card-title"><strong>${esc(row.warehouse_name)}</strong><span class="status${reportingIncomplete ? " warn-status" : ""}">${statusText}</span></div>
       ${details}
     </div>
-    <div class="power-line"><span class="actual-power">${fmt(row.actual_power_kw)}<small>kW 实际</small></span>${hasTheory ? `<span class="theory-power">理论 <strong>${fmt(row.theoretical_power_kw)}</strong> kW</span>` : ""}</div>
-    ${hasTheory ? `<div class="load-track"><i style="width:${width}%"></i></div>
-    <div class="load-labels"><span>理论功率负载 <strong>${percent(row.load_ratio)}</strong></span><span>100% = 理论功率</span></div>` : ""}
+    <div class="power-block">
+      <div class="power-head">
+        <span>当前实际功率</span>
+        <em class="reporting${reportingIncomplete ? " warn" : ""}">${reportingLabel}</em>
+      </div>
+      <div class="power-line">
+        <span class="actual-power">${fmt(row.actual_power_kw)}<small>kW</small></span>
+        ${hasTheory ? `<span class="theory-power"><span>理论功率</span><strong>${fmt(row.theoretical_power_kw)}</strong><small>kW</small></span>` : ""}
+      </div>
+      ${hasTheory ? `<div class="load-track"><i style="width:${width}%"></i></div>
+      <div class="load-labels"><span>已上报功率负载 <strong>${percent(row.load_ratio)}</strong></span><span>100% = 理论功率</span></div>` : ""}
+    </div>
     ${larkPanelHTML(row)}
     <div class="card-facts${hasTheory ? " has-theory" : ""}">
-      ${theoryFact}
       <div class="card-fact"><div class="fact-label">整体功耗比</div><div class="fact-value">${fmt(row.power_ratio_overall_w_per_th)}<small>W/TH</small></div></div>
       <div class="card-fact"><div class="fact-label">矿机 · 算力组</div><div class="fact-value">${row.machine_count}<small>/ ${row.template_count}</small></div></div>
       <div class="card-fact"><div class="fact-label">平均 / 最高温度</div><div class="fact-value">${fmt(row.temperature_avg_c)}<small>/ ${fmt(row.temperature_max_c)} °C</small></div></div>
     </div>
     ${peakHTML(row)}
     <div class="composition">
-      <div class="composition-title"><span>型号分布</span><span>${row.machine_count} 台</span></div>
-      <div class="model-stack">${stack}</div>
-      <div class="model-tags">${tags}</div>
-      <div class="mode-block">
-        <div class="mode-title">档位分布</div>
-        <div class="mode-list">${modeRows || '<div class="mode-row"><span>未记录</span></div>'}</div>
+      <div class="config-line">
+        <span class="config-label">型号 <small>${models.sorted.length} 种</small></span>
+        <div class="config-tags">${tags || '<span class="config-empty">未记录</span>'}</div>
+      </div>
+      <div class="config-line">
+        <span class="config-label">档位 <small>${modes.sorted.length} 种</small></span>
+        <div class="config-tags">${modeTags || '<span class="config-empty">未记录</span>'}</div>
       </div>
     </div>
     <div class="card-foot">

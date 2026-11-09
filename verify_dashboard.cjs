@@ -381,6 +381,12 @@ async function verifyBrowser(catalog) {
     assert.equal(await page.locator(".lark-power-panel").count(),
       whiteoakActiveIds.size);
     assert.equal(await page.locator(".lark-power-panel.unmatched").count(), 0);
+    assert.equal(await page.locator(".power-block .reporting").count(),
+      await page.locator(".power-block").count());
+    assert.equal(await page.locator(".capacity-row").count(),
+      whiteoakActiveIds.size * 2);
+    assert(await page.locator(".peak-sparkline").count() > 0);
+    assert.equal(await page.locator(".peak-strip").count(), 0);
     assert((await page.locator("#metrics").textContent()).includes(
       "Lark 在架功率"
     ));
