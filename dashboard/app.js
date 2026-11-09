@@ -293,7 +293,6 @@ function larkPanelHTML(row) {
       ${capacityRow("占位", lark.reserved_power_kw)}
     </div>
     <div class="lark-panel-foot">
-      <span>单机理论平均 ${fmt(lark.unit_theoretical_power_kw, 2)} kW</span>
       <span>在架 ${lark.mounted_machine_count ?? "—"} 台 · 占位 ${lark.occupied_slots ?? "—"}/${lark.total_slots ?? "—"}</span>
     </div>
   </div>`;
@@ -724,16 +723,19 @@ async function openDetail(id, options = {}) {
     ? ` · 上报 ${row.machine_count}/${fmt(row.lark_power.mounted_machine_count, 0)} 台`
     : "";
   $("detail-meta").textContent = `${row.data_center_name} · ${hourLabel(row.hour)} · 本箱覆盖 ${coverageLabel(warehouseHours(row.warehouse_id))}${reporting}`;
-  const theoryMetric = finite(row.available_capacity_kw)
-    ? metric("理论余量", fmt(row.available_capacity_kw), "kW")
-    : "";
   $("detail-metrics").innerHTML = metric("实际功率", fmt(row.actual_power_kw), "kW")
-    + theoryMetric
+    + metric("理论余量", fmt(row.available_capacity_kw), "kW")
     + metric("整体功耗比", fmt(row.power_ratio_overall_w_per_th), "W/TH")
+    + metric(
+      "单机理论平均功率",
+      fmt(row.lark_power?.unit_theoretical_power_kw, 2),
+      "kW",
+      "Lark 配置",
+    )
+    + metric("平均单机算力", fmt(row.avg_hashrate_ths), "TH/s")
     + metric("矿机 / 算力组", `${row.machine_count} / ${row.template_count}`, "台 / 组")
     + metric("平均 / 最高温度", `${fmt(row.temperature_avg_c)} / ${fmt(row.temperature_max_c)}`, "°C")
-    + metric("平均 / 最大拒绝率", `${percent(row.rejected_rate_avg)} / ${percent(row.rejected_rate_max)}`, "")
-    + metric("平均单机算力", fmt(row.avg_hashrate_ths), "TH/s");
+    + metric("平均 / 最大拒绝率", `${percent(row.rejected_rate_avg)} / ${percent(row.rejected_rate_max)}`, "");
   const capacityPanel = larkPanelHTML(row);
   $("detail-capacity").innerHTML = capacityPanel
     ? `<h3>容量与负荷</h3>${capacityPanel}`

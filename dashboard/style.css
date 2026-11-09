@@ -287,7 +287,7 @@ main.is-loading #metrics, main.is-loading .trend, main.is-loading .warehouse-gri
 }
 .capacity-row.over .capacity-track i { background: var(--red); }
 .lark-panel-foot {
-  display: flex; justify-content: space-between; flex-wrap: wrap;
+  display: flex; justify-content: flex-end; flex-wrap: wrap;
   gap: 4px 10px; margin-top: 7px; color: #7c8886; font-size: 9px;
 }
 
@@ -407,9 +407,42 @@ dialog::backdrop { background: #1d302d66; }
 .dialog-head button svg { width: 17px; height: 17px; }
 .dialog-head h2 { font-size: 21px; }
 .dialog-head p { margin: 6px 0 17px; font-size: 12px; }
-#detail-metrics { border: 0; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 15px 0; }
-#detail-metrics .metric { padding: 0 14px; }
-#detail-metrics .metric-value { font-size: 20px; }
+#detail-metrics.metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  padding: 1px 0;
+  background: #e1e8e5;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+#detail-metrics .metric {
+  min-height: 92px;
+  padding: 14px 16px 13px;
+  border: 0;
+  background: #fff;
+}
+#detail-metrics .metric:nth-child(-n + 4) {
+  background: #f7faf9;
+}
+#detail-metrics .metric-label {
+  margin-bottom: 9px;
+  color: #647470;
+  font-size: 11px;
+  font-weight: 600;
+}
+#detail-metrics .metric-value {
+  color: #263a35;
+  font-size: 19px;
+  line-height: 1.1;
+}
+#detail-metrics .metric:nth-child(-n + 4) .metric-value {
+  color: #153e34;
+  font-size: 23px;
+}
+#detail-metrics .metric-note {
+  margin-top: 6px;
+  font-size: 10px;
+}
 .tabs { display: flex; gap: 16px; border-bottom: 1px solid #d9e2df; margin-top: 20px; }
 .tabs button { border: 0; border-bottom: 3px solid transparent; border-radius: 0; padding: 10px 12px; background: transparent; }
 .tabs button[aria-selected="true"] { border-bottom-color: var(--green); color: var(--green); font-weight: 600; }
@@ -821,7 +854,7 @@ tbody tr:hover { background: #f4faf8; }
   .trend-tools { align-items: flex-start; }
   .trend-stat-separator { display: none; }
   dialog { padding: 16px; }
-  #detail-metrics { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 18px; }
+  #detail-metrics.metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 680px) {
   .warehouse-grid { grid-template-columns: minmax(0, 1fr); }
@@ -851,7 +884,7 @@ tbody tr:hover { background: #f4faf8; }
   .badge { display: none; }
   .brand > span:last-child { display: none; }
   .section-title > span { padding-top: 0; }
-  #detail-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #detail-metrics.metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .warehouse-card { padding: 16px; }
   .card-title strong { font-size: 19px; }
   .actual-power { font-size: 36px; }
@@ -876,7 +909,13 @@ tbody tr:hover { background: #f4faf8; }
   }
   .dialog-head { gap: 10px; }
   .dialog-head h2 { font-size: 20px; }
-  #detail-metrics { row-gap: 20px; }
+  #detail-metrics .metric {
+    min-height: 88px;
+    padding: 13px 12px;
+  }
+  #detail-metrics .metric:nth-child(-n + 4) .metric-value {
+    font-size: 21px;
+  }
   .detail-capacity .capacity-grid { grid-template-columns: 1fr; gap: 12px; }
   .peak-machine-callout {
     grid-template-columns: 1fr;

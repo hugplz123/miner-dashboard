@@ -522,6 +522,11 @@ async function verifyBrowser(catalog) {
     assert((await page.locator("#detail-meta").textContent()).includes(
       `${String(peak.hour).slice(8)}:00`
     ));
+    assert.equal(await page.locator("#detail-metrics .metric").count(), 8);
+    const detailMetricsText = await page.locator("#detail-metrics").textContent();
+    assert(detailMetricsText.includes("单机理论平均功率"));
+    assert(!(await page.locator("#detail-capacity .lark-panel-foot")
+      .textContent()).includes("单机理论平均"));
     assert((await page.locator(".peak-machine-callout").textContent())
       .includes(peakMachine.model));
     assert((await page.locator(".peak-machine-callout").textContent())
