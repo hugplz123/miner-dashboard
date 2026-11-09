@@ -15,6 +15,26 @@ const DETAIL_LEVELS = [
   "template_rows", "model_rows", "work_mode_rows", "machine_rows",
 ];
 const EXPECTED_HOURS_PER_DAY = 24;
+const EXPECTED_LARK_COUNTS = {
+  Blossom01: 10,
+  May01: 12,
+  Nimrod01: 18,
+  Nimrod02: 16,
+  WhiteOak01: 40,
+};
+const LARK_RECORD_FIELDS = [
+  "mounted_machine_count",
+  "mounted_power_kw",
+  "occupied_slots",
+  "offline_machine_count",
+  "power_limit_kw",
+  "reserved_power_kw",
+  "site",
+  "total_slots",
+  "unit_theoretical_power_kw",
+  "vacant_slots",
+  "warehouse_number",
+];
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -42,9 +62,17 @@ function expectedOverallRatio(rows) {
     : null;
 }
 
+function normalizeWarehouseNumber(value) {
+  return Number(String(value).trim().replace(/^C/i, ""));
+}
+
+function larkKey(site, warehouseNumber) {
+  return `${String(site).trim().toLocaleLowerCase()}/${Number(warehouseNumber)}`;
+}
+
 function verifyPublishedData() {
   const catalog = readJson(path.join(DATA, "catalog.json"));
-  assert.equal(catalog.schema_version, "3.0");
+  assert.equal(catalog.schema_version, "3.1");
   assert.equal(catalog.date_range.days, 7);
   assert.equal(catalog.available_dates.length, 7);
   assert.deepEqual(catalog.available_dates, [...catalog.available_dates].sort());
@@ -53,6 +81,82 @@ function verifyPublishedData() {
     EXPECTED_SITES,
   );
   assert.deepEqual(catalog.detail_dates, [catalog.latest_date]);
+
+  const lark = readJson(path.join(DATA, "lark_power.json"));
+  assert.equal(lark.schema_version, "1.0");
+  assert.equal(lark.source, "lark_bitable");
+  assert.equal(lark.base_token, "VuLLbn5bNaIWkoswngWlyEOygof");
+  assert.equal(lark.table_id, "tblNq169SbT5aD2N");
+  assert.equal(lark.view_id, "vewUWFcYgO");
+  assert(Number.isFinite(Date.parse(lark.synced_at)));
+  assert.equal(lark.record_count, 96);
+  assert.equal(lark.records.length, lark.record_count);
+  assert(!/SourceID|ip[_ -]?range|IP范围|app[_ -]?secret/i.test(
+    JSON.stringify(lark),
+  ));
+
+  const larkCounts = Object.fromEntries(
+    Object.keys(EXPECTED_LARK_COUNTS).map(site => [site, 0]),
+  );
+  const larkRecords = new Map();
+  for (const record of lark.records) {
+    assert.deepEqual(Object.keys(record).sort(), LARK_RECORD_FIELDS);
+    assert(EXPECTED_SITES.includes(record.site));
+    assert(Number.isInteger(record.warehouse_number));
+    assert(record.warehouse_number > 0);
+    const key = larkKey(record.site, record.warehouse_number);
+    assert(!larkRecords.has(key), `duplicate Lark warehouse key: ${key}`);
+    larkRecords.set(key, record);
+    larkCounts[record.site] += 1;
+  }
+  assert.deepEqual(larkCounts, EXPECTED_LARK_COUNTS);
+  assert.deepEqual(catalog.lark_power, {
+    schema_version: lark.schema_version,
+    source: lark.source,
+    synced_at: lark.synced_at,
+    record_count: lark.record_count,
+    matched_warehouses: lark.record_count,
+    unmatched_records: [],
+  });
+
+  const larkMissing = { Nimrod01: 0, WhiteOak01: 0 };
+  for (const record of lark.records) {
+    if (!Number.isFinite(record.mounted_power_kw)) {
+      assert(Object.hasOwn(larkMissing, record.site));
+      larkMissing[record.site] += 1;
+    }
+  }
+  assert.deepEqual(larkMissing, { Nimrod01: 3, WhiteOak01: 1 });
+
+  assert.equal(catalog.warehouses.length, 98);
+  let matchedWarehouses = 0;
+  for (const warehouse of catalog.warehouses) {
+    const key = larkKey(
+      warehouse.data_center_name,
+      normalizeWarehouseNumber(warehouse.warehouse_name),
+    );
+    const expectedLark = larkRecords.get(key);
+    if (expectedLark) {
+      assert.deepEqual(warehouse.lark_power, expectedLark);
+      matchedWarehouses += 1;
+    }
+    else {
+      assert(!("lark_power" in warehouse));
+    }
+  }
+  assert.equal(matchedWarehouses, 96);
+  assert.equal(larkRecords.size, matchedWarehouses);
+
+  for (const site of catalog.sites) {
+    assert.equal(site.lark_power.matched_warehouses,
+      EXPECTED_LARK_COUNTS[site.data_center_name]);
+    assert.equal(site.lark_power.total_warehouses, site.warehouse_count);
+  }
+  const nimrod02 = catalog.sites.find(site =>
+    site.data_center_name === "Nimrod02"
+  );
+  assert.equal(nimrod02.lark_power.matched_warehouses, 16);
+  assert.equal(nimrod02.lark_power.total_warehouses, 18);
 
   const rowsByDate = new Map();
   let allRows = 0;
@@ -71,18 +175,52 @@ function verifyPublishedData() {
       assert(sum(row.models || [], "machine_count") === row.machine_count);
       assert(sum(row.templates || [], "machine_count") === row.machine_count);
       assert(sum(row.work_modes || [], "machine_count") === row.machine_count);
-      assert(row.temperature_max_c == null || row.temperature_max_c > 0);
-      assert(row.temperature_min_c == null || row.temperature_min_c > -30);
+      if (row.temperature_max_c != null) {
+        assert(row.temperature_max_c >= -30 && row.temperature_max_c <= 125);
+      }
+      if (row.temperature_min_c != null) {
+        assert(row.temperature_min_c >= -30 && row.temperature_min_c <= 125);
+      }
+      if (row.temperature_min_c != null && row.temperature_max_c != null) {
+        assert(row.temperature_min_c <= row.temperature_max_c);
+      }
     }
     rowsByDate.set(date, day.warehouse_rows);
     allRows += day.warehouse_rows.length;
   }
 
-  assert.equal(
-    catalog.daily_summary.length,
-    catalog.sites.length * catalog.available_dates.length,
+  const nimrod02Warehouses = catalog.warehouses.filter(warehouse =>
+    warehouse.data_center_name === "Nimrod02"
   );
+  assert.equal(nimrod02Warehouses.length, 18);
+  const nimrod02LatestRows = rowsByDate.get(catalog.latest_date).filter(row =>
+    row.data_center_id === nimrod02.data_center_id
+  );
+  const nimrod02LatestIds = new Set(
+    nimrod02LatestRows.map(row => row.warehouse_id),
+  );
+  assert.equal(nimrod02LatestIds.size, 16);
+  for (const warehouseName of ["C17", "C18"]) {
+    const warehouse = nimrod02Warehouses.find(item =>
+      item.warehouse_name === warehouseName
+    );
+    assert(warehouse);
+    assert(!nimrod02LatestIds.has(warehouse.warehouse_id));
+  }
+
+  const expectedDailyKeys = new Set();
+  for (const [date, rows] of rowsByDate) {
+    for (const row of rows) {
+      expectedDailyKeys.add(`${date}/${row.data_center_id}`);
+    }
+  }
+  assert.equal(catalog.daily_summary.length, expectedDailyKeys.size);
+  const actualDailyKeys = new Set();
   for (const daily of catalog.daily_summary) {
+    const dailyKey = `${daily.date}/${daily.data_center_id}`;
+    assert(expectedDailyKeys.has(dailyKey), `unexpected daily row: ${dailyKey}`);
+    assert(!actualDailyKeys.has(dailyKey), `duplicate daily row: ${dailyKey}`);
+    actualDailyKeys.add(dailyKey);
     const rows = rowsByDate.get(daily.date).filter(row =>
       row.data_center_id === daily.data_center_id
     );
@@ -185,7 +323,7 @@ function verifyPublishedData() {
     }
   }
 
-  return { catalog, catalogRows: allRows, machineHours };
+  return { catalog, lark, catalogRows: allRows, machineHours };
 }
 
 async function verifyBrowser(catalog) {
@@ -224,13 +362,28 @@ async function verifyBrowser(catalog) {
     const whiteoak = catalog.sites.find(site =>
       site.data_center_name === "WhiteOak01"
     );
+    const latestDayRows = readGzipJson(path.join(
+      DATA, "days", `${catalog.latest_date.replaceAll("-", "")}.json.gz`,
+    )).warehouse_rows;
+    const whiteoakActiveIds = new Set(
+      latestDayRows
+        .filter(row => row.data_center_id === whiteoak.data_center_id)
+        .map(row => row.warehouse_id),
+    );
     assert.equal(await page.locator("#site").inputValue(),
       whiteoak.data_center_id);
     assert.equal(await page.locator("#brand-name").textContent(),
       "WhiteOak01");
     assert.equal(await page.locator("#date option").count(), 7);
     assert.equal(await page.locator(".warehouse-card").count(),
-      whiteoak.warehouse_count);
+      whiteoakActiveIds.size);
+    assert.equal(await page.locator("#metrics .metric").count(), 6);
+    assert.equal(await page.locator(".lark-power-panel").count(),
+      whiteoakActiveIds.size);
+    assert.equal(await page.locator(".lark-power-panel.unmatched").count(), 0);
+    assert((await page.locator("#metrics").textContent()).includes(
+      "Lark 在架功率"
+    ));
     assert.equal(await page.locator("#trend .chart-hit").count(), 7);
     assert.equal(await page.locator("#trend .chart-selection").count(), 1);
     assert(!requests.some(url => /\/data\/[0-9a-f]{32}_\d{10}_/.test(url)));
@@ -242,7 +395,7 @@ async function verifyBrowser(catalog) {
       `运行 ${latestDaily.hours_with_data}/${latestDaily.expected_hours} 小时`
     ));
     assert((await page.locator("#date option:checked").textContent()).includes(
-      `完整 ${latestDaily.complete_warehouse_count}/${latestDaily.warehouse_count} 箱`
+      `完整 ${latestDaily.complete_warehouse_count}/${latestDaily.warehouses_with_data} 箱`
     ));
     assert.equal(await page.locator("#coverage").getAttribute("data-complete"),
       String(latestDaily.is_fully_complete));
@@ -250,10 +403,9 @@ async function verifyBrowser(catalog) {
       `场地 ${latestDaily.hours_with_data}/${latestDaily.expected_hours} 小时有数据`
     ));
     assert((await page.locator("#coverage").textContent()).includes(
-      `${latestDaily.complete_warehouse_count}/${latestDaily.warehouse_count} 个矿箱完整`
+      `${latestDaily.complete_warehouse_count}/${latestDaily.warehouses_with_data} 个矿箱完整`
     ));
-    const expectedCoverageWarnings = latestDaily.incomplete_warehouse_count
-      + latestDaily.warehouses_without_data;
+    const expectedCoverageWarnings = latestDaily.incomplete_warehouse_count;
     assert.equal(await page.locator(
       ".warehouse-hour-coverage.warn, .missing-coverage.warn"
     ).count(), expectedCoverageWarnings);
@@ -286,8 +438,31 @@ async function verifyBrowser(catalog) {
     await page.waitForFunction(date =>
       document.querySelector("#meta")?.textContent.includes(`当前 ${date}`),
       latestDate);
+    const peakButton = page.locator(".peak-action").first();
+    assert(await peakButton.isEnabled());
+    const peakId = await peakButton.getAttribute("data-peak-id");
+    const peakRows = latestDayRows.filter(row =>
+      row.data_center_id === whiteoak.data_center_id
+      && row.warehouse_id === peakId
+      && Number.isFinite(row.actual_power_kw)
+    );
+    const peak = peakRows.reduce((best, row) =>
+      !best || row.actual_power_kw > best.actual_power_kw ? row : best,
+    null);
+    assert(peak, "peak warehouse hour not found");
+    await peakButton.click();
+    await page.waitForSelector("#detail-content tbody tr");
+    assert.equal(await page.locator("#hour").inputValue(), String(peak.hour));
+    assert(await page.locator("#detail").evaluate(dialog => dialog.open));
+    assert((await page.locator("#detail-meta").textContent()).includes(
+      `${String(peak.hour).slice(8)}:00`
+    ));
+    await page.locator("#close").click();
+
     const detailRequestsBefore = requests.length;
-    await page.locator(".warehouse-card .card-head button").first().click();
+    await page.locator(
+      `.warehouse-card .card-head button[data-detail-id]:not([data-detail-id="${peakId}"])`,
+    ).first().click();
     await page.waitForSelector("#detail-content tbody tr");
     const detailRequest = requests.slice(detailRequestsBefore)
       .find(url => url.includes("/data/details/"));
@@ -333,9 +508,61 @@ async function verifyBrowser(catalog) {
     await page.selectOption("#site", nimrod.data_center_id);
     await page.waitForFunction(name =>
       document.querySelector("#brand-name")?.textContent === name, "Nimrod01");
+    const nimrodActiveIds = new Set(
+      latestDayRows
+        .filter(row => row.data_center_id === nimrod.data_center_id)
+        .map(row => row.warehouse_id),
+    );
     assert.equal(await page.locator(".warehouse-card").count(),
-      nimrod.warehouse_count);
+      nimrodActiveIds.size);
     assert((await page.locator("#trend-title").textContent()).includes("Nimrod01"));
+    const missingCapacity = catalog.warehouses.find(warehouse =>
+      warehouse.data_center_name === "Nimrod01"
+      && nimrodActiveIds.has(warehouse.warehouse_id)
+      && warehouse.lark_power
+      && warehouse.lark_power.mounted_power_kw == null
+    );
+    assert(missingCapacity, "active missing-capacity warehouse not found");
+    const missingCard = page.locator(
+      `[data-warehouse-id="${missingCapacity.warehouse_id}"]`,
+    );
+    assert((await missingCard.locator(".lark-panel-head").textContent())
+      .includes("字段缺失"));
+    assert((await missingCard.locator(".lark-power-panel").textContent())
+      .includes("容量字段缺失"));
+
+    const nimrod02 = catalog.sites.find(site =>
+      site.data_center_name === "Nimrod02"
+    );
+    const nimrod02LatestRows = latestDayRows.filter(row =>
+      row.data_center_id === nimrod02.data_center_id
+    );
+    const nimrod02ActiveIds = new Set(
+      nimrod02LatestRows.map(row => row.warehouse_id),
+    );
+    const nimrod02Inactive = catalog.warehouses.filter(warehouse =>
+      warehouse.data_center_name === "Nimrod02"
+      && !nimrod02ActiveIds.has(warehouse.warehouse_id)
+    );
+    assert.equal(nimrod02Inactive.length, 2);
+    await page.selectOption("#site", nimrod02.data_center_id);
+    await page.waitForFunction(name =>
+      document.querySelector("#brand-name")?.textContent === name, "Nimrod02");
+    await page.selectOption("#date", catalog.latest_date);
+    await page.waitForFunction(date =>
+      document.querySelector("#meta")?.textContent.includes(`当前 ${date}`),
+      catalog.latest_date);
+    assert.equal(await page.locator(".warehouse-card").count(),
+      nimrod02ActiveIds.size);
+    assert((await page.locator("#count").textContent()).includes(
+      `${nimrod02ActiveIds.size} 个矿箱`
+    ));
+    for (const warehouse of nimrod02Inactive) {
+      assert.equal(await page.locator(
+        `[data-warehouse-id="${warehouse.warehouse_id}"]`
+      ).count(), 0);
+    }
+    assert.equal(await page.locator(".lark-power-panel.unmatched").count(), 0);
 
     const racePage = await browser.newPage({
       viewport: { width: 1440, height: 1000 },
@@ -400,16 +627,17 @@ async function verifyBrowser(catalog) {
 }
 
 (async () => {
-  const { catalog, catalogRows, machineHours } = verifyPublishedData();
+  const { catalog, lark, catalogRows, machineHours } = verifyPublishedData();
   if (!DATA_ONLY) {
     await verifyBrowser(catalog);
   }
   console.log(
     `PASS: ${catalog.sites.length} sites, ${catalog.available_dates.length} days, ` +
-    `${catalogRows} warehouse hours, ${machineHours} latest-day machine hours; ` +
+    `${catalogRows} warehouse hours, ${machineHours} latest-day machine hours, ` +
+    `${lark.record_count} Lark power records; ` +
     (DATA_ONLY
       ? "data and lazy gzip details"
-      : "data, lazy gzip details, charts, site/date switching and mobile layout"),
+      : "data, lazy gzip details, Lark matching, peak drill-down, charts, site/date switching and mobile layout"),
   );
 })().catch(error => {
   console.error(error);

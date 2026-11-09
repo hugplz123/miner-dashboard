@@ -38,6 +38,19 @@ function Push-Dashboard($git) {
     throw "Dashboard was committed locally, but git push failed."
 }
 
+# Refresh the public Lark capacity snapshot before rebuilding the static site.
+& python sync_lark_power.py
+if ($LASTEXITCODE -ne 0) {
+    $larkSnapshot = "dashboard\data\lark_power.json"
+    if (Test-Path -LiteralPath $larkSnapshot) {
+        Write-Host "Lark sync failed; continuing with the existing snapshot." `
+            -ForegroundColor Yellow
+    }
+    else {
+        throw "Lark sync failed and no local snapshot is available."
+    }
+}
+
 # Only the newest day is queried; the other days are reused from outputs/.
 $arguments = @("run_rolling.py", "--days", $Days, "--jobs", $Jobs, "--skip-existing")
 if ($Date) {
