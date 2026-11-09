@@ -169,32 +169,54 @@ function setLoading(active, text = "") {
   document.querySelector("main").classList.toggle("is-loading", active);
 }
 
-function modelSummary(models) {
-  const sorted = [...(models || [])].sort((a, b) => b.machine_count - a.machine_count);
-  const visible = sorted.slice(0, 5);
-  const rest = sorted.slice(5);
-  if (rest.length) {
-    visible.push({
-      model: `其他 ${rest.length} 种`,
-      machine_count: rest.reduce((total, item) => total + item.machine_count, 0),
-      rest: true,
-    });
+function distributionHTML(title, items, nameKey, emptyLabel) {
+  const colors = ["#4f8f7a", "#d09a43", "#5b7fa6", "#bb6b55", "#758b66"];
+  const sorted = [...(items || [])]
+    .filter(item => Number(item.machine_count) > 0)
+    .sort((a, b) => b.machine_count - a.machine_count);
+  const total = sorted.reduce(
+    (sum, item) => sum + Number(item.machine_count || 0),
+    0,
+  );
+  if (!total) {
+    return `<section class="distribution-block" data-distribution="${nameKey}">
+      <div class="distribution-head"><span>${title}</span><b>暂无数据</b></div>
+      <div class="distribution-empty">${emptyLabel}</div>
+    </section>`;
   }
-  return { sorted, visible, rest };
-}
-
-function workModeSummary(modes) {
-  const sorted = [...(modes || [])].sort((a, b) => b.machine_count - a.machine_count);
-  const visible = sorted.slice(0, 4);
+  const visible = sorted.slice(0, 4).map((item, index) => ({
+    label: item[nameKey] || (nameKey === "template_name" ? "未分组" : "未记录"),
+    count: Number(item.machine_count),
+    color: colors[index],
+  }));
   const rest = sorted.slice(4);
   if (rest.length) {
     visible.push({
-      work_mode: `其他 ${rest.length} 种`,
-      machine_count: rest.reduce((total, item) => total + item.machine_count, 0),
+      label: `其他 ${rest.length} 类`,
+      count: rest.reduce((sum, item) => sum + Number(item.machine_count), 0),
+      color: colors[4],
       rest: true,
     });
   }
-  return { sorted, visible };
+  return `<section class="distribution-block" data-distribution="${nameKey}" data-total="${total}">
+    <div class="distribution-head">
+      <span>${title}</span>
+      <b>${sorted.length} 类 · ${total} 台</b>
+    </div>
+    <div class="distribution-track" aria-label="${title}矿机数量分布">
+      ${visible.map(item => `<i class="distribution-segment"
+        style="--segment-color:${item.color};--segment-weight:${item.count}"
+        data-count="${item.count}"
+        title="${esc(item.label)}：${item.count} 台（${fmt(item.count / total * 100, 1)}%）"></i>`).join("")}
+    </div>
+    <div class="distribution-legend">
+      ${visible.map(item => `<span class="distribution-key" title="${esc(item.label)}：${item.count} 台">
+        <i style="--segment-color:${item.color}"></i>
+        <strong>${esc(item.label)}</strong>
+        <em>${item.count}</em>
+      </span>`).join("")}
+    </div>
+  </section>`;
 }
 
 function detailAvailable() {
@@ -307,9 +329,6 @@ function cardHTML(row) {
   }
   const hasTheory = finite(row.theoretical_power_kw) && finite(row.load_ratio);
   const overload = hasTheory && row.load_ratio > 1;
-  const modes = workModeSummary(row.work_modes);
-  const primaryMode = modes.sorted[0];
-  const extraModes = Math.max(0, modes.sorted.length - 1);
   const installedMachines = row.lark_power?.mounted_machine_count;
   const reportingIncomplete = finite(installedMachines)
     && Number(installedMachines) > Number(row.machine_count);
@@ -330,6 +349,7 @@ function cardHTML(row) {
         ${hasTheory ? `<span class="power-reference">理论 ${fmt(row.theoretical_power_kw)} kW</span>` : ""}
       </div>
     </div>
+    ${larkPanelHTML(row)}
     <div class="card-glance">
       <div class="glance-item">
         <span>功耗比</span>
@@ -339,10 +359,10 @@ function cardHTML(row) {
         <span>运行矿机</span>
         <strong>${row.machine_count}<small>台</small></strong>
       </div>
-      <div class="glance-item mode-item" title="${esc(primaryMode?.work_mode || "未记录")}：${primaryMode?.machine_count ?? 0} 台">
-        <span>主档位</span>
-        <strong>${esc(primaryMode?.work_mode || "—")}<small>${primaryMode ? `${primaryMode.machine_count} 台` : ""}${extraModes ? ` · +${extraModes}` : ""}</small></strong>
-      </div>
+    </div>
+    <div class="card-distributions">
+      ${distributionHTML("算力组分布", row.templates, "template_name", "当前小时未记录算力组")}
+      ${distributionHTML("档位分布", row.work_modes, "work_mode", "当前小时未记录档位")}
     </div>
     ${peakHTML(row)}
     ${boxComplete ? "" : `<div class="card-alert"><span class="warehouse-hour-coverage warn">当日覆盖 ${esc(coverageLabel(observedHours))}</span></div>`}

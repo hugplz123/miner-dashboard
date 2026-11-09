@@ -378,12 +378,52 @@ async function verifyBrowser(catalog) {
     assert.equal(await page.locator(".warehouse-card").count(),
       whiteoakActiveIds.size);
     assert.equal(await page.locator("#metrics .metric").count(), 6);
-    assert.equal(await page.locator(".warehouse-card .lark-power-panel").count(), 0);
     assert.equal(await page.locator(".lark-power-panel.unmatched").count(), 0);
-    assert.equal(await page.locator(".warehouse-card .capacity-row").count(), 0);
     const boxesWithData = await page.locator(
       ".warehouse-card:not(.missing-card)",
     ).count();
+    assert.equal(await page.locator(".warehouse-card .lark-power-panel")
+      .count(), boxesWithData);
+    assert.equal(await page.locator(".warehouse-card .capacity-row").count(),
+      boxesWithData * 2);
+    assert.equal(await page.locator(
+      ".warehouse-card .card-distributions .distribution-block",
+    ).count(), boxesWithData * 2);
+    assert.equal(await page.locator(
+      ".warehouse-card .distribution-track",
+    ).count(), boxesWithData * 2);
+    const selectedHour = Number(await page.locator("#hour").inputValue());
+    const selectedRows = new Map(
+      latestDayRows
+        .filter(row =>
+          row.data_center_id === whiteoak.data_center_id
+          && row.hour === selectedHour
+        )
+        .map(row => [row.warehouse_id, row]),
+    );
+    const cardDistributionTotals = await page.locator(
+      ".warehouse-card:not(.missing-card)",
+    ).evaluateAll(cards => cards.map(card => ({
+      id: card.dataset.warehouseId,
+      totals: Object.fromEntries(
+        [...card.querySelectorAll(".distribution-block")].map(block => [
+          block.dataset.distribution,
+          Number(block.dataset.total || 0),
+        ]),
+      ),
+    })));
+    for (const card of cardDistributionTotals) {
+      const source = selectedRows.get(card.id);
+      assert(source, `selected hour row missing for ${card.id}`);
+      assert.equal(
+        card.totals.template_name,
+        sum(source.templates || [], "machine_count"),
+      );
+      assert.equal(
+        card.totals.work_mode,
+        sum(source.work_modes || [], "machine_count"),
+      );
+    }
     assert.equal(await page.locator(".warehouse-card .card-glance").count(),
       boxesWithData);
     assert.equal(await page.locator(".warehouse-card .peak-summary").count(),
