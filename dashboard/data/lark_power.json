@@ -4,7 +4,7 @@
   "base_token": "VuLLbn5bNaIWkoswngWlyEOygof",
   "table_id": "tblNq169SbT5aD2N",
   "view_id": "vewUWFcYgO",
-  "synced_at": "2026-11-09T02:32:42.200022+00:00",
+  "synced_at": "2026-11-09T10:32:42.200022+08:00",
   "record_count": 96,
   "records": [
     {
@@ -1255,5 +1255,6 @@
       "vacant_slots": 0,
       "offline_machine_count": 1
     }
-  ]
+  ],
+  "snapshot_date": "2026-11-08"
 }

@@ -13,7 +13,8 @@ const expectedHoursPerDay = 24;
 const palette = ["#3f8273", "#557fa4", "#bd9147", "#937190", "#b56e55", "#72906d", "#80795f", "#5f8790"];
 let catalog, sites = [], warehouses = [], dates = [], hours = [], currentRows = [];
 let selectedDate, dayData, detailData, detailBundle, level = "template_rows";
-let requestVersion = 0, dayRequestVersion = 0, trendMode = "daily", trendState = null;
+let requestVersion = 0, dayRequestVersion = 0, trendMode = "daily";
+let trendMetric = "ratio", trendState = null, loadFilter = "all";
 const dayCache = new Map();
 const detailCache = new Map();
 
@@ -25,9 +26,58 @@ function metric(label, value, unit, note = "") {
   return `<div class="metric"><div class="metric-label">${esc(label)}</div><div class="metric-value">${esc(value)}<span class="unit">${esc(unit)}</span></div><div class="metric-note">${esc(note)}</div></div>`;
 }
 
+function overviewMetric(label, value, unit, comparison, options = {}) {
+  return `<div class="overview-stat" data-metric="${esc(options.key || "")}">
+    <div class="overview-label"><span>${esc(label)}</span>${
+      options.scope ? `<em>${esc(options.scope)}</em>` : ""
+    }</div>
+    <div class="overview-primary">
+      <div class="overview-value">${esc(value)}<small>${esc(unit)}</small></div>
+      ${comparison}
+    </div>
+    ${options.meta ? `<div class="overview-stat-meta">${options.meta}</div>` : ""}
+  </div>`;
+}
+
+function overviewSupportMetric(label, value, unit, note, key) {
+  return `<div class="overview-support-item" data-metric="${esc(key)}">
+    <span>${esc(label)}</span>
+    <strong>${esc(value)}<small>${esc(unit)}</small></strong>
+    <em>${esc(note)}</em>
+  </div>`;
+}
+
+function powerMarginHTML(value, theory) {
+  if (!finite(value) || !finite(theory) || Number(theory) <= 0) {
+    return `<div class="overview-margin unavailable">
+      <span>对应余量</span>
+      <strong>—</strong>
+      <em>暂无对应理论功率</em>
+    </div>`;
+  }
+  const delta = Number(theory) - Number(value);
+  const over = delta < 0;
+  return `<div class="overview-margin${over ? " over" : ""}">
+    <span>对应余量</span>
+    <strong>${delta < 0 ? "−" : "+"}${fmt(Math.abs(delta))}<small>kW</small></strong>
+    <em>理论 ${fmt(theory)} kW</em>
+  </div>`;
+}
+
 function ratio(rows) {
   const hashrate = sum(rows, "power_ratio_valid_hashrate_sum_ths");
   return hashrate > 0 ? sum(rows, "power_ratio_valid_power_sum_w") / hashrate : null;
+}
+
+function finiteSum(rows, key) {
+  const values = rows
+    .map(row => Number(row[key]))
+    .filter(Number.isFinite);
+  return values.length ? values.reduce((total, value) => total + value, 0) : null;
+}
+
+function finiteCount(rows, key) {
+  return rows.filter(row => finite(row[key])).length;
 }
 
 function ratioCoverage(row) {
@@ -36,6 +86,16 @@ function ratioCoverage(row) {
 
 function finite(value) {
   return value != null && Number.isFinite(Number(value));
+}
+
+function powerGap(row) {
+  const actual = Number(row.actual_power_kw);
+  const theory = Number(row.theoretical_power_kw);
+  if (!Number.isFinite(actual) || !Number.isFinite(theory)) return null;
+  return {
+    value: theory - actual,
+    over: theory < actual,
+  };
 }
 
 function syncTimeLabel(value) {
@@ -61,8 +121,26 @@ function dailyPeak(warehouseId) {
   null);
 }
 
+function dailyMachinePeak(payload) {
+  let peak = null;
+  for (const [hour, data] of Object.entries(payload?.hours || {})) {
+    for (const machine of data.machine_rows || []) {
+      const power = Number(machine.avg_power_w);
+      if (!finite(power)) continue;
+      if (!peak || power > Number(peak.machine.avg_power_w)) {
+        peak = { hour: Number(hour), machine };
+      }
+    }
+  }
+  return peak;
+}
+
 function currentSite() {
   return sites.find(site => site.data_center_id === $("site").value);
+}
+
+function larkRecordFor(warehouse, date = selectedDate) {
+  return warehouse?.lark_power_by_date?.[date] || null;
 }
 
 function dailyFor(date, site = currentSite()) {
@@ -91,6 +169,53 @@ function warehousesWithDataOnDate(site = currentSite(), date = selectedDate) {
       )
       .map(([warehouseId]) => warehouseId),
   );
+}
+
+function larkPowerSnapshot(site = currentSite(), date = selectedDate) {
+  const activeIds = warehousesWithDataOnDate(site, date);
+  const rows = warehouses
+    .filter(warehouse =>
+      warehouse.data_center_id === site?.data_center_id
+      && (!activeIds || activeIds.has(warehouse.warehouse_id))
+    )
+    .map(warehouse => larkRecordFor(warehouse, date))
+    .filter(Boolean);
+  const siteSnapshot = site?.lark_power_by_date?.[date];
+  const available = Boolean(siteSnapshot?.available && rows.length);
+  return {
+    available,
+    snapshotDate: available ? date : null,
+    syncedAt: available ? siteSnapshot?.synced_at : null,
+    matched: rows.length,
+    mountedPower: available ? finiteSum(rows, "mounted_power_kw") : null,
+    mountedPowerCount: available ? finiteCount(rows, "mounted_power_kw") : 0,
+    reservedPower: available ? finiteSum(rows, "reserved_power_kw") : null,
+    reservedPowerCount: available ? finiteCount(rows, "reserved_power_kw") : 0,
+    mountedMachines: available ? finiteSum(rows, "mounted_machine_count") : null,
+    mountedMachineCount: available
+      ? finiteCount(rows, "mounted_machine_count") : 0,
+    occupiedSlots: available ? sum(rows, "occupied_slots") : null,
+  };
+}
+
+function loadClass(row) {
+  if (!row) return "no_hour";
+  if (row.missing) return "no_hour";
+  const load = Number(row.load_ratio);
+  if (!finite(load) || !finite(row.theoretical_power_kw)
+    || Number(row.theoretical_power_kw) <= 0) return "unclassified";
+  if (load > 1) return "over";
+  return "below";
+}
+
+function loadClassLabel(classification, row) {
+  const load = Number(row?.load_ratio);
+  return {
+    over: "高于理论",
+    below: load === 1 ? "达到理论 100%" : "低于理论",
+    no_hour: "本小时无记录",
+    unclassified: "理论功率缺失",
+  }[classification] || "未分类";
 }
 
 function coverageLabel(observed, expected = expectedHoursPerDay) {
@@ -223,7 +348,7 @@ function detailAvailable() {
   return (catalog.detail_dates || []).includes(selectedDate);
 }
 
-function renderCoverage(daily, site) {
+function renderCoverage(daily, site, lark) {
   const expected = daily?.expected_hours ?? expectedHoursPerDay;
   const observed = daily?.hours_with_data ?? daily?.hours?.length ?? hours.length;
   const { completeWarehouses, totalWarehouses } = coverageParts(daily, site);
@@ -240,6 +365,9 @@ function renderCoverage(daily, site) {
       }。`,
     );
   }
+  details.push(lark.available
+    ? `Lark 使用 ${selectedDate} 当日快照。`
+    : `${selectedDate} 没有 Lark 功率快照，不沿用其他日期。`);
   const element = $("coverage");
   element.className = `coverage-note ${
     complete ? "complete" : "incomplete"
@@ -252,7 +380,15 @@ function renderCoverage(daily, site) {
 
 function larkPanelHTML(row) {
   const lark = row.lark_power;
-  if (!lark) return "";
+  if (!lark) {
+    return `<div class="lark-power-panel unmatched snapshot-missing">
+      <div class="lark-panel-head">
+        <span>容量与负荷</span>
+        <b>当日无快照</b>
+      </div>
+      <div class="lark-unmatched">${esc(selectedDate)} 没有 Lark 容量记录，未使用其他日期替代。</div>
+    </div>`;
+  }
   const capacityFields = [
     lark.mounted_power_kw,
     lark.reserved_power_kw,
@@ -304,8 +440,11 @@ function peakHTML(row) {
     return `<div class="peak-summary empty"><span>当日功率峰值</span><strong>暂无数据</strong></div>`;
   }
   const action = detailAvailable()
-    ? `<button type="button" class="peak-action" data-peak-id="${esc(row.warehouse_id)}" title="切换到峰值小时并查看功率最高的矿机">查看最大功率矿机<i data-lucide="arrow-up-right"></i></button>`
-    : `<button type="button" disabled title="历史日期只保留矿箱汇总">仅最新一天可查看</button>`;
+    ? `<div class="peak-actions">
+      <button type="button" class="peak-action peak-hour-action" data-peak-hour-id="${esc(row.warehouse_id)}" title="查看矿箱当日总功率最高的小时">查看当日峰值<i data-lucide="arrow-up-right"></i></button>
+      <button type="button" class="peak-action peak-machine-action" data-daily-machine-id="${esc(row.warehouse_id)}" title="扫描当日全部小时并查看平均功率最高的矿机">查看最大功率矿机<i data-lucide="arrow-up-right"></i></button>
+    </div>`
+    : `<div class="peak-actions"><button type="button" disabled title="历史日期只保留矿箱汇总">仅最新一天可查看</button></div>`;
   return `<div class="peak-summary">
     <div class="peak-summary-copy">
       <span>当日峰值</span>
@@ -319,8 +458,9 @@ function peakHTML(row) {
 function cardHTML(row) {
   const observedHours = warehouseHours(row.warehouse_id);
   const boxComplete = observedHours === expectedHoursPerDay;
+  const classification = loadClass(row);
   if (row.missing) {
-    return `<article class="warehouse-card missing-card" data-warehouse-id="${esc(row.warehouse_id)}">
+    return `<article class="warehouse-card missing-card" data-warehouse-id="${esc(row.warehouse_id)}" data-load-class="no_hour">
       <div class="card-head"><div class="card-title"><strong>${esc(row.warehouse_name)}</strong><span class="status">本小时无记录</span></div></div>
       <span>没有可用于本小时汇总的矿机数据</span>
       <span class="missing-coverage${boxComplete ? "" : " warn"}">当日覆盖 ${esc(coverageLabel(observedHours))}</span>
@@ -328,25 +468,51 @@ function cardHTML(row) {
   }
   const hasTheory = finite(row.theoretical_power_kw) && finite(row.load_ratio);
   const overload = hasTheory && row.load_ratio > 1;
+  const gap = powerGap(row);
+  const loadPercent = hasTheory
+    ? Math.max(0, Math.min(100, Number(row.load_ratio) * 100)) : null;
   const installedMachines = row.lark_power?.mounted_machine_count;
   const reportingIncomplete = finite(installedMachines)
     && Number(installedMachines) > Number(row.machine_count);
-  const statusText = reportingIncomplete
-    ? "上报覆盖不足" : hasTheory ? (overload ? "超理论功率" : "理论功率内") : "实际数据";
+  const statusText = loadClassLabel(classification, row);
   const details = detailAvailable()
     ? `<button type="button" data-detail-id="${esc(row.warehouse_id)}" aria-label="查看 ${esc(row.warehouse_name)} 详情">详情<i data-lucide="arrow-up-right"></i></button>`
     : `<button type="button" disabled title="历史日期仅保留矿箱汇总，明细保留最新一天">仅汇总</button>`;
-  return `<article class="warehouse-card${overload ? " overload" : ""}${hasTheory ? "" : " actual-only"}" data-warehouse-id="${esc(row.warehouse_id)}">
+  const cardClasses = [
+    "warehouse-card",
+    overload ? "overload" : "",
+    classification === "below" ? "below-theory" : "",
+    hasTheory ? "" : "actual-only",
+  ].filter(Boolean).join(" ");
+  return `<article class="${cardClasses}" data-warehouse-id="${esc(row.warehouse_id)}" data-load-class="${esc(classification)}">
     <div class="card-head">
-      <div class="card-title"><strong>${esc(row.warehouse_name)}</strong><span class="status${reportingIncomplete ? " warn-status" : ""}">${statusText}</span></div>
+      <div class="card-title"><strong>${esc(row.warehouse_name)}</strong><span class="status status-${esc(classification)}">${esc(statusText)}</span></div>
       ${details}
     </div>
     <div class="power-block">
-      <div class="power-label">当前实际功率</div>
+      <div class="power-label">当前实际功率${reportingIncomplete
+        ? `<span class="reporting warn">上报 ${row.machine_count}/${installedMachines} 台</span>`
+        : ""}</div>
       <div class="power-line">
         <span class="actual-power">${fmt(row.actual_power_kw)}<small>kW</small></span>
         ${hasTheory ? `<span class="power-reference">理论 ${fmt(row.theoretical_power_kw)} kW</span>` : ""}
       </div>
+      ${hasTheory ? `<div class="power-comparison${gap?.over ? " over" : ""}">
+        <div class="power-comparison-track"
+          title="实际 ${fmt(row.actual_power_kw)} kW，理论 ${fmt(row.theoretical_power_kw)} kW，已用 ${fmt(row.load_ratio * 100)}%">
+          <i style="width:${fmt(loadPercent, 2)}%"></i>
+        </div>
+        <div class="power-comparison-labels">
+          <span>已用 ${fmt(row.load_ratio * 100)}%</span>
+          <strong>${gap
+            ? gap.value === 0
+              ? "已达理论功率"
+              : gap.over
+                ? `超出理论 ${fmt(Math.abs(gap.value))} kW`
+                : `剩余 ${fmt(gap.value)} kW`
+            : "差值不可用"}</strong>
+        </div>
+      </div>` : ""}
     </div>
     ${larkPanelHTML(row)}
     <div class="card-glance">
@@ -384,55 +550,107 @@ function render() {
     ? siteWarehouses.filter(warehouse => activeIds.has(warehouse.warehouse_id))
     : siteWarehouses;
   const activeWarehouseCount = visibleWarehouses.length;
-  const activeLarkRows = visibleWarehouses
-    .map(warehouse => warehouse.lark_power)
-    .filter(Boolean);
   const machineCount = sum(currentRows, "machine_count");
   const actualPower = sum(currentRows, "actual_power_kw");
   const theoryPower = sum(currentRows, "theoretical_power_kw");
-  const theoryRows = currentRows.filter(row => finite(row.theoretical_power_kw)).length;
   const validSamples = sum(currentRows, "power_ratio_sample_count");
-  const larkMatched = activeLarkRows.length;
-  const larkMounted = larkMatched ? sum(activeLarkRows, "mounted_power_kw") : null;
-  const larkReserved = larkMatched ? sum(activeLarkRows, "reserved_power_kw") : null;
+  const lark = larkPowerSnapshot(site, selectedDate);
+  const reportedBoxes = new Set(currentRows.map(row => row.warehouse_id)).size;
+  const larkMatched = lark.matched;
+  const larkMounted = lark.mountedPower;
+  const larkReserved = lark.reservedPower;
   const daily = dailyFor(selectedDate, site);
   const observedHours = daily?.hours_with_data ?? daily?.hours?.length ?? hours.length;
   const expectedHours = daily?.expected_hours ?? expectedHoursPerDay;
   $("brand-mark").textContent = site.data_center_name.charAt(0).toUpperCase();
   $("brand-name").textContent = site.data_center_name;
-  $("trend-title").textContent = `${site.data_center_name} 功耗比趋势`;
-  $("trend").setAttribute("aria-label", `${site.data_center_name} 功耗比趋势`);
+  const trendLabel = trendMetric === "ratio" ? "功耗比趋势" : "功率趋势";
+  $("trend-title").textContent = `${site.data_center_name} ${trendLabel}`;
+  $("trend").setAttribute("aria-label", `${site.data_center_name} ${trendLabel}`);
   const warehouseCoverage = `${activeWarehouseCount} 个矿箱`;
   $("meta").textContent = `${catalog.date_range.start} 至 ${catalog.date_range.end} · 当前 ${selectedDate} · ${siteCoverageLabel(daily, site)} · ${warehouseCoverage}`;
   document.title = `${site.data_center_name} · 矿箱负荷`;
-  renderCoverage(daily, site);
-  $("notice").textContent = `功率为矿机上报的小时平均值；Lark 容量为快照数据，同步于 ${syncTimeLabel(catalog.lark_power?.synced_at)}，${site.data_center_name} 已覆盖 ${larkMatched}/${activeWarehouseCount} 个有数据矿箱。`;
-  $("metrics").innerHTML = metric("上报实际功率", fmt(actualPower), "kW", "矿机小时平均功耗之和")
-    + metric("对应理论功率", fmt(theoryPower), "kW", `${theoryRows}/${currentRows.length} 个当前小时矿箱已配置`)
-    + metric("理论余量", fmt(sum(currentRows, "available_capacity_kw")), "kW", "逐箱余量之和，超载不抵扣")
-    + metric("Lark 在架功率", fmt(larkMounted), "kW", `${larkMatched}/${activeWarehouseCount} 个有数据矿箱 · 快照`)
-    + metric("Lark 占位功率", fmt(larkReserved), "kW", `在架 ${fmt(sum(activeLarkRows, "mounted_machine_count"), 0)} 台 · 占位 ${fmt(sum(activeLarkRows, "occupied_slots"), 0)} 位`)
-    + metric("样本整体功耗比", fmt(ratio(currentRows)), "W/TH", `${fmt(machineCount, 0)} 台 · 有效样本 ${validSamples}`);
+  renderCoverage(daily, site, lark);
+  $("notice").textContent = lark.available
+    ? `功率为矿机上报的小时平均值；Lark 使用 ${selectedDate} 当日快照，同步于 ${syncTimeLabel(lark.syncedAt)}。没有快照的日期不会沿用其他日期数据。`
+    : `功率为矿机上报的小时平均值；${selectedDate} 没有 Lark 容量快照，因此不显示在架、占位和理论容量对比。`;
+  $("metrics").innerHTML = `<div class="overview-power-grid">
+      ${overviewMetric(
+        "上报实际功率", fmt(actualPower), "kW",
+        powerMarginHTML(actualPower, theoryPower),
+        {
+          key: "actual",
+          scope: "当前小时",
+          meta: `上报矿箱 <b>${reportedBoxes}/${activeWarehouseCount}</b> · 上报矿机 <b>${fmt(machineCount, 0)}${lark.available && finite(lark.mountedMachines) ? `/${fmt(lark.mountedMachines, 0)}` : ""}</b> 台`,
+        },
+      )}
+      ${overviewMetric(
+        "Lark 在架功率", fmt(larkMounted), "kW",
+        powerMarginHTML(larkMounted, theoryPower),
+        {
+          key: "mounted",
+          scope: lark.available ? "当日快照" : "无快照",
+          meta: lark.available
+            ? `快照覆盖 ${lark.mountedPowerCount}/${larkMatched} 箱`
+            : "Lark 快照缺失",
+        },
+      )}
+      ${overviewMetric(
+        "Lark 占位功率", fmt(larkReserved), "kW",
+        powerMarginHTML(larkReserved, theoryPower),
+        {
+          key: "reserved",
+          scope: lark.available ? "当日快照" : "无快照",
+          meta: lark.available
+            ? `快照覆盖 ${lark.reservedPowerCount}/${larkMatched} 箱`
+            : "Lark 快照缺失",
+        },
+      )}
+    </div>
+    <div class="overview-support">
+      ${overviewSupportMetric(
+        "小时覆盖", `${observedHours ?? "—"}/${expectedHours}`, "小时",
+        `当前小时 ${String(hour).slice(-2)}:00`, "hour-coverage",
+      )}
+      ${overviewSupportMetric(
+        "样本整体功耗比", fmt(ratio(currentRows)), "W/TH",
+        `${fmt(machineCount, 0)} 台 · 有效样本 ${validSamples}`, "ratio",
+      )}
+    </div>`;
 
   const search = $("search").value.trim().toLowerCase();
   let rows = visibleWarehouses.map(warehouse => {
     const measured = currentRows.find(
       row => row.warehouse_id === warehouse.warehouse_id,
     );
+    const larkPower = larkRecordFor(warehouse, selectedDate);
     return measured
-      ? { ...warehouse, ...measured }
-      : { ...warehouse, hour, missing: true };
+      ? { ...warehouse, ...measured, lark_power: larkPower }
+      : { ...warehouse, lark_power: larkPower, hour, missing: true };
   });
   rows = rows.filter(row => JSON.stringify([
     row.warehouse_name, row.models, row.work_modes, row.templates,
     row.lark_power,
   ]).toLowerCase().includes(search));
+  if (loadFilter !== "all") {
+    rows = rows.filter(row => loadClass(row) === loadFilter);
+  }
   const sort = $("sort").value;
-  const sortKey = { available: "available_capacity_kw", load: "load_ratio", power: "actual_power_kw" }[sort];
-  rows.sort((a, b) => sort === "name"
-    ? a.warehouse_name.localeCompare(b.warehouse_name, undefined, { numeric: true })
-    : ((b[sortKey] ?? -Infinity) - (a[sortKey] ?? -Infinity))
-      || a.warehouse_name.localeCompare(b.warehouse_name, undefined, { numeric: true }));
+  const sortKey = {
+    available: "available_capacity_kw",
+    power: "actual_power_kw",
+  }[sort];
+  rows.sort((a, b) => {
+    if (sort === "name") {
+      return b.warehouse_name.localeCompare(
+        a.warehouse_name, undefined, { numeric: true },
+      );
+    }
+    return ((b[sortKey] ?? -Infinity) - (a[sortKey] ?? -Infinity))
+      || a.warehouse_name.localeCompare(
+        b.warehouse_name, undefined, { numeric: true },
+      );
+  });
 
   $("count").textContent = `${site.data_center_name} · ${rows.length} 个矿箱`;
   $("detail-note").textContent = detailAvailable()
@@ -455,45 +673,141 @@ function dailySeries() {
     return {
       key: item.date,
       label: `${shortDate(item.date)}${complete ? "" : "*"}`,
-      value: item.power_ratio_overall_w_per_th,
+      ratio: item.power_ratio_overall_w_per_th,
+      actualPower: finite(item.actual_power_kw) && observed
+        ? item.actual_power_kw / observed : null,
+      theoreticalPower: finite(item.theoretical_power_kw) && observed
+        ? item.theoretical_power_kw / observed : null,
+      mountedPower: larkPowerSnapshot(site, item.date).mountedPower,
       detail: item,
       complete,
+      missing: false,
     };
   });
 }
 
 function hourlySeries() {
   const site = currentSite();
-  return hours.map(hour => {
+  const lark = larkPowerSnapshot(site, selectedDate);
+  const recordedHours = new Set(hours.map(Number));
+  return Array.from({ length: expectedHoursPerDay }, (_, index) => {
+    const hour = Number(`${compactDate(selectedDate)}${String(index).padStart(2, "0")}`);
     const rows = dayData.warehouse_rows.filter(row =>
       row.data_center_id === site.data_center_id && row.hour === hour
     );
+    const hasData = recordedHours.has(hour);
     return {
       key: String(hour),
       label: `${String(hour).slice(-2)}:00`,
-      value: ratio(rows),
+      ratio: ratio(rows),
+      actualPower: hasData ? sum(rows, "actual_power_kw") : null,
+      theoreticalPower: hasData ? sum(rows, "theoretical_power_kw") : null,
+      mountedPower: lark.available ? lark.mountedPower : null,
       detail: {
         machine_count: sum(rows, "machine_count"),
         power_ratio_sample_count: sum(rows, "power_ratio_sample_count"),
       },
+      missing: !hasData,
     };
   });
 }
 
+function trendNumber(definition, item) {
+  const value = definition.value(item);
+  return value == null || !Number.isFinite(Number(value)) ? null : Number(value);
+}
+
+function chartSegments(points) {
+  const segments = [];
+  let current = [];
+  for (const point of points) {
+    if (point) {
+      current.push(point);
+    }
+    else if (current.length) {
+      segments.push(current);
+      current = [];
+    }
+  }
+  if (current.length) segments.push(current);
+  return segments;
+}
+
+function chartPath(points) {
+  return points.map((point, index) =>
+    `${index ? "L" : "M"}${point[0].toFixed(1)},${point[1].toFixed(1)}`
+  ).join(" ");
+}
+
 function renderTrend() {
-  if (!dayData || dayData.date !== selectedDate || !hours.length) return;
+  if (!dayData || dayData.date !== selectedDate) return;
   const series = trendMode === "daily" ? dailySeries() : hourlySeries();
+  const definitions = trendMetric === "ratio"
+    ? [{
+        key: "ratio",
+        label: "功耗比",
+        className: "ratio",
+        unit: "W/TH",
+        value: item => item.ratio,
+        primary: true,
+        area: true,
+      }]
+    : [
+        {
+          key: "actual",
+          label: "实际功率",
+          className: "actual",
+          unit: "kW",
+          value: item => item.actualPower,
+          primary: true,
+          area: true,
+        },
+        {
+          key: "theory",
+          label: "理论功率",
+          className: "theory",
+          unit: "kW",
+          value: item => item.theoreticalPower,
+        },
+        {
+          key: "mounted",
+          label: "Lark 在架",
+          className: "mounted",
+          unit: "kW",
+          value: item => item.mountedPower,
+        },
+      ];
+  const primary = definitions.find(definition => definition.primary);
+  const titleLabel = trendMetric === "ratio" ? "功耗比趋势" : "功率趋势";
+  $("trend-title").textContent = `${currentSite().data_center_name} ${titleLabel}`;
+  $("trend").setAttribute(
+    "aria-label",
+    `${currentSite().data_center_name} ${titleLabel}`,
+  );
   const incompleteDays = series.filter(item =>
     trendMode === "daily" && !item.complete
   ).length;
-  $("trend-meta").textContent = trendMode === "daily"
-    ? `样本功耗加权 · W/TH${incompleteDays ? " · * 存在小时或矿箱缺口" : ""}`
-    : `样本功耗加权 · W/TH · 当日覆盖 ${coverageLabel(hours.length)}`;
+  if (trendMetric === "ratio") {
+    $("trend-meta").textContent = trendMode === "daily"
+      ? `样本功耗加权 · W/TH${incompleteDays ? " · * 存在小时或矿箱缺口" : ""}`
+      : `样本功耗加权 · W/TH · 当日覆盖 ${coverageLabel(hours.length)} · 灰色带为未上报小时`;
+  }
+  else {
+    $("trend-meta").textContent = trendMode === "daily"
+      ? `日均小时功率 · kW${incompleteDays ? " · * 存在小时或矿箱缺口" : ""}`
+      : `当前小时功率 · kW · Lark 使用当日快照 · 灰色带为未上报小时`;
+  }
   const selectedKey = trendMode === "daily" ? selectedDate : String($("hour").value);
-  const numeric = series.map(item => item.value).filter(value => value != null);
-  if (!numeric.length) {
-    $("trend-summary").textContent = "当前范围没有可计算的整体功耗比样本";
+  const allValues = definitions.flatMap(definition =>
+    series.map(item => trendNumber(definition, item))
+      .filter(value => value != null)
+  );
+  if (!allValues.length) {
+    $("trend-summary").textContent = trendMetric === "ratio"
+      ? "当前范围没有可计算的整体功耗比样本"
+      : "当前范围没有可用的功率数据";
     $("trend").innerHTML = "";
+    trendState = null;
     return;
   }
   const svg = $("trend");
@@ -502,82 +816,152 @@ function renderTrend() {
   const pad = { left: 43, right: 14, top: 20, bottom: 27 };
   const plotW = width - pad.left - pad.right;
   const plotH = height - pad.top - pad.bottom;
-  const low = Math.min(...numeric);
-  const high = Math.max(...numeric);
+  const low = Math.min(...allValues);
+  const high = Math.max(...allValues);
   const span = Math.max(high - low, 0.5);
-  const minValue = Math.max(0, low - span * 0.28);
-  const maxValue = high + span * 0.28;
+  const ratioMode = trendMetric === "ratio";
+  const minValue = ratioMode ? Math.max(0, low - span * 0.28) : 0;
+  const maxValue = high + span * (ratioMode ? 0.28 : 0.16);
   const x = index => pad.left + (series.length === 1
     ? plotW / 2 : plotW * index / (series.length - 1));
   const y = value => pad.top + plotH * (1 - (value - minValue) / (maxValue - minValue));
-  const points = series.map((item, index) =>
-    item.value == null ? null : [x(index), y(item.value)]
-  );
-  const visiblePoints = points.filter(Boolean);
-  const line = visiblePoints.map((point, index) =>
-    `${index ? "L" : "M"}${point[0].toFixed(1)},${point[1].toFixed(1)}`
-  ).join(" ");
-  const area = visiblePoints.length
-    ? `${line} L${visiblePoints.at(-1)[0].toFixed(1)},${(pad.top + plotH).toFixed(1)} L${visiblePoints[0][0].toFixed(1)},${(pad.top + plotH).toFixed(1)} Z` : "";
-  const average = numeric.reduce((total, value) => total + value, 0) / numeric.length;
   const selected = series.find(item => item.key === selectedKey);
   const currentLabel = trendMode === "daily" ? "当前日期" : "当前小时";
-  const averageLabel = trendMode === "daily"
-    ? `近 7 天均值${incompleteDays ? "（含不完整日）" : ""}`
-    : "当日小时均值";
   const selectedCoverage = trendMode === "daily"
     && selected?.detail?.expected_hours
     ? ` · ${siteCoverageLabel(selected.detail)}`
     : "";
-  $("trend-summary").innerHTML = `
-    <span class="trend-stat current">
-      <span class="trend-stat-label">${currentLabel}</span>
-      <span class="trend-stat-value">${fmt(selected?.value)}</span>
-      <span class="trend-stat-unit">W/TH</span>
-      <span class="trend-stat-context">${esc(selected?.label || "")}${esc(selectedCoverage)}</span>
-    </span>
-    <span class="trend-stat-separator" aria-hidden="true"></span>
-    <span class="trend-stat">
-      <span class="trend-stat-label">${averageLabel}</span>
-      <span class="trend-stat-value">${fmt(average)}</span>
-      <span class="trend-stat-unit">W/TH</span>
-    </span>`;
+  const primaryValues = series.map(item => trendNumber(primary, item))
+    .filter(value => value != null);
+  const average = primaryValues.length
+    ? primaryValues.reduce((total, value) => total + value, 0)
+      / primaryValues.length
+    : null;
+  if (ratioMode) {
+    const averageLabel = trendMode === "daily"
+      ? `近 7 天均值${incompleteDays ? "（含不完整日）" : ""}`
+      : "当日小时均值";
+    $("trend-summary").innerHTML = `
+      <span class="trend-stat current">
+        <span class="trend-stat-label">${currentLabel}</span>
+        <span class="trend-stat-value">${fmt(selected?.ratio)}</span>
+        <span class="trend-stat-unit">W/TH</span>
+        <span class="trend-stat-context">${esc(selected?.label || "")}${esc(selectedCoverage)}</span>
+      </span>
+      <span class="trend-stat-separator" aria-hidden="true"></span>
+      <span class="trend-stat">
+        <span class="trend-stat-label">${averageLabel}</span>
+        <span class="trend-stat-value">${fmt(average)}</span>
+        <span class="trend-stat-unit">W/TH</span>
+      </span>`;
+  }
+  else {
+    $("trend-summary").innerHTML = `
+      <span class="trend-stat current">
+        <span class="trend-stat-label">${currentLabel}实际</span>
+        <span class="trend-stat-value">${fmt(selected?.actualPower)}</span>
+        <span class="trend-stat-unit">kW</span>
+        <span class="trend-stat-context">${esc(selected?.label || "")}${esc(selectedCoverage)}</span>
+      </span>
+      <span class="trend-stat-separator" aria-hidden="true"></span>
+      <span class="trend-stat">
+        <span class="trend-stat-label">同期理论</span>
+        <span class="trend-stat-value">${fmt(selected?.theoreticalPower)}</span>
+        <span class="trend-stat-unit">kW</span>
+      </span>
+      <span class="trend-stat">
+        <span class="trend-stat-label">Lark 在架</span>
+        <span class="trend-stat-value">${fmt(selected?.mountedPower)}</span>
+        <span class="trend-stat-unit">kW</span>
+      </span>
+      <span class="trend-legend" aria-label="趋势图例">
+        <span><i class="actual"></i>实际</span>
+        <span><i class="theory"></i>理论</span>
+        <span><i class="mounted"></i>Lark 在架快照</span>
+      </span>`;
+  }
   const grid = [0, 1, 2, 3].map(index => {
     const value = maxValue - (maxValue - minValue) * index / 3;
     const yPos = pad.top + plotH * index / 3;
     return `<line class="chart-grid" x1="${pad.left}" x2="${width - pad.right}" y1="${yPos}" y2="${yPos}"/>
       <text class="chart-axis" x="0" y="${yPos + 3}">${fmt(value)}</text>`;
   }).join("");
-  const meanY = y(average);
+  const meanY = ratioMode && finite(average) ? y(average) : null;
   const labelEvery = series.length > 12 ? 4 : 1;
   const labels = series.map((item, index) => index % labelEvery === 0
     ? `<text class="chart-hour" x="${x(index)}" y="${height - 7}" text-anchor="middle" data-chart-key="${esc(item.key)}">${esc(item.label)}</text>` : "").join("");
   const hitWidth = plotW / Math.max(series.length, 1);
+  const missingBands = trendMode === "hourly" ? series.map((item, index) => {
+    if (!item.missing) return "";
+    const left = Math.max(pad.left, x(index) - hitWidth / 2);
+    const right = Math.min(width - pad.right, x(index) + hitWidth / 2);
+    return `<rect class="chart-missing-band" x="${left}" y="${pad.top}" width="${Math.max(1, right - left)}" height="${plotH}"><title>${esc(item.label)} 无上报数据</title></rect>`;
+  }).join("") : "";
+  const pointsByDefinition = new Map(definitions.map(definition => [
+    definition.key,
+    series.map((item, index) => {
+      const value = trendNumber(definition, item);
+      return value == null ? null : [x(index), y(value)];
+    }),
+  ]));
+  const primaryPoints = pointsByDefinition.get(primary.key);
   const hits = series.map((item, index) => {
     const detail = item.detail || {};
-    const value = item.value;
-    const center = points[index];
+    const center = primaryPoints[index];
     const dateText = trendMode === "daily" ? item.key : hourLabel(Number(item.key));
     const coverage = trendMode === "daily" && detail.expected_hours
       ? ` · ${siteCoverageLabel(detail)}`
       : "";
-    return `<rect class="chart-hit" x="${x(index) - hitWidth / 2}" y="${pad.top}" width="${hitWidth}" height="${plotH}" tabindex="0" role="button" data-chart-key="${esc(item.key)}" aria-label="${esc(dateText)}，功耗比 ${fmt(value)} W/TH${esc(coverage)}，点击查看"><title>${esc(dateText)} · ${fmt(value)} W/TH${esc(coverage)} · 样本 ${detail.power_ratio_sample_count ?? "—"}/${detail.machine_count ?? "—"}</title></rect>
+    const valueText = ratioMode
+      ? `功耗比 ${fmt(item.ratio)} W/TH`
+      : `实际 ${fmt(item.actualPower)} kW，理论 ${fmt(item.theoreticalPower)} kW，在架 ${fmt(item.mountedPower)} kW`;
+    const sampleText = ratioMode
+      ? `样本 ${detail.power_ratio_sample_count ?? "—"}/${detail.machine_count ?? "—"}`
+      : "";
+    const missingText = item.missing ? "，无上报数据" : "";
+    return `<rect class="chart-hit" x="${x(index) - hitWidth / 2}" y="${pad.top}" width="${hitWidth}" height="${plotH}" tabindex="0" role="button" data-chart-key="${esc(item.key)}" aria-label="${esc(dateText)}，${esc(valueText)}${esc(coverage)}${esc(missingText)}，点击查看"><title>${esc(dateText)} · ${esc(valueText)}${esc(coverage)}${sampleText ? ` · ${esc(sampleText)}` : ""}${esc(missingText)}</title></rect>
       ${center ? `<circle class="chart-point" cx="${center[0]}" cy="${center[1]}" r="3"/>` : ""}`;
   }).join("");
   const currentIndex = series.findIndex(item => item.key === selectedKey);
-  const currentPoint = points[currentIndex]
-    ? `<circle class="chart-current" cx="${points[currentIndex][0]}" cy="${points[currentIndex][1]}" r="4.2"/>` : "";
+  const currentPoint = currentIndex >= 0 && primaryPoints[currentIndex]
+    ? `<circle class="chart-current" cx="${primaryPoints[currentIndex][0]}" cy="${primaryPoints[currentIndex][1]}" r="4.2"/>` : "";
   const selection = currentIndex < 0 ? ""
     : `<line class="chart-selection" x1="${x(currentIndex)}" x2="${x(currentIndex)}" y1="${pad.top}" y2="${pad.top + plotH}"/>`;
-  trendState = { series, width, height, pad, minValue, maxValue, plotW, plotH };
+  const linePaths = definitions.map(definition => {
+    const points = pointsByDefinition.get(definition.key);
+    const segments = chartSegments(points);
+    const paths = segments.map(segment =>
+      segment.length > 1
+        ? `<path class="chart-line ${definition.className}" d="${chartPath(segment)}"/>`
+        : ""
+    ).join("");
+    if (!definition.primary && segments.length === 1 && segments[0].length === 1) {
+      const [point] = segments[0];
+      return `${paths}<circle class="chart-series-point ${definition.className}" cx="${point[0]}" cy="${point[1]}" r="3.2"/>`;
+    }
+    return paths;
+  }).join("");
+  const primarySegments = chartSegments(primaryPoints);
+  const area = primary.area
+    ? primarySegments.filter(segment => segment.length > 1).map(segment =>
+      `<path class="chart-area ${primary.className}" d="${chartPath(segment)} L${segment.at(-1)[0].toFixed(1)},${(pad.top + plotH).toFixed(1)} L${segment[0][0].toFixed(1)},${(pad.top + plotH).toFixed(1)} Z"/>`
+    ).join("")
+    : "";
+  trendState = {
+    series, definitions, primary, width, height, pad, minValue, maxValue,
+    plotW, plotH, metric: trendMetric, mode: trendMode,
+  };
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.setAttribute("width", width);
   svg.setAttribute("height", height);
-  svg.innerHTML = `<defs><linearGradient id="ratioFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#147960" stop-opacity=".16"/><stop offset="1" stop-color="#147960" stop-opacity="0"/></linearGradient></defs>
-    ${grid}<line class="chart-mean" x1="${pad.left}" x2="${width - pad.right}" y1="${meanY}" y2="${meanY}"/>
-    ${area ? `<path class="chart-area" d="${area}"/>` : ""}
+  svg.innerHTML = `<defs>
+      <linearGradient id="ratioFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#147960" stop-opacity=".16"/><stop offset="1" stop-color="#147960" stop-opacity="0"/></linearGradient>
+      <linearGradient id="powerFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#147960" stop-opacity=".13"/><stop offset="1" stop-color="#147960" stop-opacity="0"/></linearGradient>
+    </defs>
+    ${missingBands}${grid}${meanY == null ? "" : `<line class="chart-mean" x1="${pad.left}" x2="${width - pad.right}" y1="${meanY}" y2="${meanY}"/>`}
+    ${area}
     ${selection}
-    ${line ? `<path class="chart-line" d="${line}"/>` : ""}
+    ${linePaths}
     ${hits}${currentPoint}${labels}`;
 }
 
@@ -588,7 +972,9 @@ function showTooltip(event) {
   const rect = svg.getBoundingClientRect();
   const scale = trendState.width / rect.width;
   const relativeX = (event.clientX - rect.left) * scale;
-  const { series, pad, plotW, plotH, minValue, maxValue } = trendState;
+  const {
+    series, primary, pad, plotW, plotH, minValue, maxValue,
+  } = trendState;
   const index = Math.round((relativeX - pad.left) / Math.max(1, plotW) * (series.length - 1));
   if (index < 0 || index >= series.length) { tooltip.hidden = true; return; }
   const item = series[index];
@@ -597,10 +983,24 @@ function showTooltip(event) {
   const coverage = trendMode === "daily" && detail.expected_hours
     ? ` · ${siteCoverageLabel(detail)}`
     : "";
-  tooltip.innerHTML = `<strong>${fmt(item.value)} W/TH</strong><span>${esc(dateText)}${esc(coverage)}<br>功耗比样本 ${detail.power_ratio_sample_count ?? "—"} / ${detail.machine_count ?? "—"}</span>`;
+  if (item.missing) {
+    tooltip.innerHTML = `<strong>无上报数据</strong><span>${esc(dateText)}<br>该小时没有被矿机小时汇总覆盖</span>`;
+  }
+  else if (trendState.metric === "ratio") {
+    tooltip.innerHTML = `<strong>${fmt(item.ratio)} W/TH</strong><span>${esc(dateText)}${esc(coverage)}<br>功耗比样本 ${detail.power_ratio_sample_count ?? "—"} / ${detail.machine_count ?? "—"}</span>`;
+  }
+  else {
+    tooltip.innerHTML = `<strong>实际 ${fmt(item.actualPower)} kW</strong>
+      <div class="tooltip-series">
+        <span><i style="color:#7f8c89"></i>理论功率</span><b>${fmt(item.theoreticalPower)} kW</b>
+        <span><i style="color:#477b9d"></i>Lark 在架</span><b>${fmt(item.mountedPower)} kW</b>
+      </div>
+      <span>${esc(dateText)}${esc(coverage)}<br>Lark 在架使用所选日期当日快照</span>`;
+  }
   const x = pad.left + (series.length === 1 ? plotW / 2 : plotW * index / (series.length - 1));
-  const yPos = item.value == null ? pad.top
-    : pad.top + plotH * (1 - (item.value - minValue) / (maxValue - minValue));
+  const primaryValue = trendNumber(primary, item);
+  const yPos = primaryValue == null ? pad.top
+    : pad.top + plotH * (1 - (primaryValue - minValue) / (maxValue - minValue));
   tooltip.style.left = `${Math.max(75, Math.min(rect.width - 75, x / scale))}px`;
   tooltip.style.top = `${yPos / scale - 8}px`;
   tooltip.hidden = false;
@@ -699,32 +1099,27 @@ async function fetchGzipJson(url, timeoutMs = 45000) {
   }
 }
 
-let focusPeakMachine = false;
+let focusPeakMachineScope = null;
 
-async function openDetail(id, options = {}) {
-  const warehouse = warehouses.find(item =>
-    item.data_center_id === currentSite()?.data_center_id
-    && item.warehouse_id === id
-  );
-  const row = {
-    ...(warehouse || {}),
-    ...(currentRows.find(item => item.warehouse_id === id) || {}),
-  };
-  if (!row || !detailAvailable()) return;
-  const token = ++requestVersion;
-  detailData = null;
-  detailBundle = null;
-  focusPeakMachine = Boolean(options.focusPeakMachine);
-  level = focusPeakMachine ? "machine_rows" : "template_rows";
-  $("detail-title").textContent = focusPeakMachine
-    ? `${row.warehouse_name} · 峰值矿机`
-    : `${row.warehouse_name} · 矿箱详情`;
+function renderDetailSummary(row, options = {}) {
+  const titleSuffix = options.dailyMachinePeak
+    ? "当日最大功率矿机"
+    : options.peakHourView ? "当日峰值小时" : "矿箱详情";
+  $("detail-title").textContent = `${row.warehouse_name} · ${titleSuffix}`;
   const reporting = finite(row.lark_power?.mounted_machine_count)
     ? ` · 上报 ${row.machine_count}/${fmt(row.lark_power.mounted_machine_count, 0)} 台`
     : "";
   $("detail-meta").textContent = `${row.data_center_name} · ${hourLabel(row.hour)} · 本箱覆盖 ${coverageLabel(warehouseHours(row.warehouse_id))}${reporting}`;
+  const gap = powerGap(row);
+  const gapLabel = gap?.value === 0
+    ? "与理论持平" : gap?.over ? "超出理论" : "低于理论";
   $("detail-metrics").innerHTML = metric("实际功率", fmt(row.actual_power_kw), "kW")
-    + metric("理论余量", fmt(row.available_capacity_kw), "kW")
+    + metric(
+      gap ? gapLabel : "功率差值",
+      gap ? fmt(Math.abs(gap.value)) : "—",
+      "kW",
+      "理论 − 实际",
+    )
     + metric("整体功耗比", fmt(row.power_ratio_overall_w_per_th), "W/TH")
     + metric(
       "单机理论平均功率",
@@ -740,6 +1135,36 @@ async function openDetail(id, options = {}) {
   $("detail-capacity").innerHTML = capacityPanel
     ? `<h3>容量与负荷</h3>${capacityPanel}`
     : `<p class="capacity-empty">该矿箱暂未匹配容量数据。</p>`;
+}
+
+async function openDetail(id, options = {}) {
+  const warehouse = warehouses.find(item =>
+    item.data_center_id === currentSite()?.data_center_id
+    && item.warehouse_id === id
+  );
+  if (!warehouse) return;
+  let row = {
+    ...warehouse,
+    ...(options.snapshotRow
+      || currentRows.find(item => item.warehouse_id === id)
+      || {}),
+    lark_power: larkRecordFor(warehouse, selectedDate),
+  };
+  if (!detailAvailable()) return;
+  const token = ++requestVersion;
+  detailData = null;
+  detailBundle = null;
+  focusPeakMachineScope = options.dailyMachinePeak
+    ? "day" : options.focusPeakMachine ? "hour" : null;
+  level = focusPeakMachineScope ? "machine_rows" : "template_rows";
+  if (options.dailyMachinePeak) {
+    $("detail-title").textContent = `${row.warehouse_name} · 当日最大功率矿机`;
+    $("detail-meta").textContent = `${row.data_center_name} · 正在扫描 ${selectedDate} 全部小时`;
+    $("detail-metrics").innerHTML = "";
+    $("detail-capacity").innerHTML = "";
+  } else {
+    renderDetailSummary(row, options);
+  }
   $("detail-focus").innerHTML = "";
   $("detail-search").value = "";
   $("detail").showModal();
@@ -754,7 +1179,28 @@ async function openDetail(id, options = {}) {
     const payload = await detailCache.get(key);
     if (token !== requestVersion) return;
     detailBundle = payload;
-    detailData = payload.hours[String(row.hour)];
+    if (options.dailyMachinePeak) {
+      const dayPeak = dailyMachinePeak(payload);
+      if (!dayPeak) throw Error("当日没有可用的矿机功率数据");
+      const peakRow = dayData?.warehouse_rows.find(item =>
+        item.data_center_id === row.data_center_id
+        && item.warehouse_id === row.warehouse_id
+        && item.hour === dayPeak.hour
+      );
+      if (peakRow) {
+        row = {
+          ...row,
+          ...peakRow,
+          lark_power: larkRecordFor(warehouse, selectedDate),
+        };
+      } else {
+        row = { ...row, hour: dayPeak.hour };
+      }
+      renderDetailSummary(row, options);
+      detailData = payload.hours[String(dayPeak.hour)];
+    } else {
+      detailData = payload.hours[String(row.hour)];
+    }
     if (!detailData) throw Error("该小时没有明细");
     renderDetail();
   } catch (error) {
@@ -765,12 +1211,15 @@ async function openDetail(id, options = {}) {
   }
 }
 
-async function revealPeak(id) {
+async function revealPeakHour(id) {
   const peak = dailyPeak(id);
   if (!peak || !detailAvailable()) return;
-  $("hour").value = String(peak.hour);
-  render();
-  await openDetail(id, { focusPeakMachine: true });
+  await openDetail(id, { peakHourView: true, snapshotRow: peak });
+}
+
+async function revealDailyMachinePeak(id) {
+  if (!detailAvailable()) return;
+  await openDetail(id, { dailyMachinePeak: true });
 }
 
 function renderDetail() {
@@ -801,10 +1250,12 @@ function renderDetail() {
     ["拒绝率", level === "machine_rows" ? "rejected_rate" : "rejected_rate_avg"],
     ["温度 °C", level === "machine_rows" ? "temperature_c" : "temperature_avg_c"],
   );
-  if (focusPeakMachine && level === "machine_rows" && peakMachine) {
+  if (focusPeakMachineScope && level === "machine_rows" && peakMachine) {
+    const peakLabel = focusPeakMachineScope === "day"
+      ? "当日最大功率矿机" : "本小时最大功率矿机";
     $("detail-focus").innerHTML = `<div class="peak-machine-callout">
       <div class="peak-machine-heading">
-        <span>本小时最大功率矿机</span>
+        <span>${peakLabel}</span>
         <strong>${esc(peakMachine.model || "型号未记录")}</strong>
         <em>${esc(peakMachine.ip || "IP 未记录")}</em>
       </div>
@@ -822,7 +1273,7 @@ function renderDetail() {
     $("detail-focus").innerHTML = "";
   }
   $("detail-content").innerHTML = `<table><thead><tr>${columns.map(([label]) => `<th>${label}</th>`).join("")}</tr></thead><tbody>${rows.map(row => {
-    const isPeakMachine = focusPeakMachine && level === "machine_rows"
+    const isPeakMachine = focusPeakMachineScope && level === "machine_rows"
       && peakMachine && row.ip === peakMachine.ip;
     return `<tr class="${isPeakMachine ? "peak-machine-row" : ""}">${columns.map(([, key]) => `<td>${esc(key.includes("rejected") ? percent(row[key]) : typeof row[key] === "number" ? fmt(row[key]) : row[key] ?? "未记录")}</td>`).join("")}</tr>`;
   }).join("")}</tbody></table>${rows.length ? "" : "<p>没有符合条件的明细。</p>"}`;
@@ -848,10 +1299,26 @@ $("site").onchange = async () => {
 };
 $("sort").onchange = render;
 $("search").oninput = render;
+document.querySelectorAll("[data-load-filter]").forEach(button => {
+  button.onclick = () => {
+    loadFilter = button.dataset.loadFilter;
+    document.querySelectorAll("[data-load-filter]").forEach(item =>
+      item.setAttribute(
+        "aria-pressed",
+        item === button ? "true" : "false",
+      ));
+    render();
+  };
+});
 $("cards").onclick = event => {
-  const peakButton = event.target.closest("[data-peak-id]");
-  if (peakButton) {
-    revealPeak(peakButton.dataset.peakId);
+  const peakHourButton = event.target.closest("[data-peak-hour-id]");
+  if (peakHourButton) {
+    revealPeakHour(peakHourButton.dataset.peakHourId);
+    return;
+  }
+  const dailyMachineButton = event.target.closest("[data-daily-machine-id]");
+  if (dailyMachineButton) {
+    revealDailyMachinePeak(dailyMachineButton.dataset.dailyMachineId);
     return;
   }
   const button = event.target.closest("[data-detail-id]");
@@ -866,6 +1333,14 @@ document.querySelectorAll("[data-trend-mode]").forEach(button => {
   button.onclick = () => {
     trendMode = button.dataset.trendMode;
     document.querySelectorAll("[data-trend-mode]").forEach(item =>
+      item.setAttribute("aria-pressed", item === button ? "true" : "false"));
+    renderTrend();
+  };
+});
+document.querySelectorAll("[data-trend-metric]").forEach(button => {
+  button.onclick = () => {
+    trendMetric = button.dataset.trendMetric;
+    document.querySelectorAll("[data-trend-metric]").forEach(item =>
       item.setAttribute("aria-pressed", item === button ? "true" : "false"));
     renderTrend();
   };

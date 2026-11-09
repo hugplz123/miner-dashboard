@@ -16,6 +16,7 @@ SUMMARY_PATTERN = re.compile(
 DETAIL_PATTERN = re.compile(
     r"^(?P<site>.+?)_(?P<date>\d{8})_dashboard\.json$"
 )
+LARK_SNAPSHOT_PATTERN = re.compile(r"^(?P<date>\d{8})\.json$")
 DETAIL_LEVELS = ("template_rows", "model_rows", "work_mode_rows", "machine_rows")
 PRIVATE_FIELDS = {"mac", "source_id", "worker_location"}
 EXPECTED_HOURS_PER_DAY = 24
@@ -100,13 +101,27 @@ def normalize_warehouse_number(value):
     return int(match.group(1))
 
 
-def load_lark_power(path):
+def load_lark_power(path, expected_date=None):
     path = Path(path)
     if not path.exists():
-        return None, {}
+        return None, {}, None
     snapshot = load_json(path)
     if snapshot.get("schema_version") != "1.0":
         raise ValueError(f"Unsupported Lark power schema in {path}")
+    snapshot_date = str(
+        snapshot.get("snapshot_date")
+        or (iso_date(expected_date) if expected_date else "")
+    ).strip()
+    try:
+        snapshot_date = dt.date.fromisoformat(snapshot_date).isoformat()
+    except ValueError as exc:
+        raise ValueError(
+            f"Lark power snapshot {path} has no valid snapshot_date"
+        ) from exc
+    if expected_date and snapshot_date != iso_date(expected_date):
+        raise ValueError(
+            f"Lark snapshot date {snapshot_date} does not match {path.name}"
+        )
     by_key = {}
     for record in snapshot.get("records") or []:
         key = (
@@ -120,37 +135,104 @@ def load_lark_power(path):
         by_key[key] = record
     if snapshot.get("record_count") != len(by_key):
         raise ValueError("Lark power record_count does not match records")
-    return snapshot, by_key
+    return snapshot, by_key, snapshot_date
 
 
-def attach_lark_power(warehouses, snapshot, by_key):
-    matched_keys = set()
-    for (center_id, _), warehouse in warehouses.items():
+def load_lark_power_history(history_dir, latest_path):
+    history_dir = Path(history_dir)
+    snapshots = {}
+    if history_dir.exists():
+        for path in sorted(history_dir.glob("*.json")):
+            match = LARK_SNAPSHOT_PATTERN.fullmatch(path.name)
+            if not match:
+                continue
+            snapshot, by_key, snapshot_date = load_lark_power(
+                path, expected_date=match.group("date")
+            )
+            snapshots[snapshot_date] = (snapshot, by_key)
+
+    latest_snapshot, latest_by_key, latest_date = load_lark_power(latest_path)
+    if latest_date:
+        previous = snapshots.get(latest_date)
+        if previous is None or (
+            str(latest_snapshot.get("synced_at") or "")
+            >= str(previous[0].get("synced_at") or "")
+        ):
+            snapshots[latest_date] = (latest_snapshot, latest_by_key)
+    return snapshots
+
+
+def attach_lark_power(warehouses, snapshots):
+    matched_by_date = {}
+    for date, (snapshot, by_key) in sorted(snapshots.items()):
+        matched_keys = set()
+        for warehouse in warehouses.values():
+            key = (
+                str(warehouse["data_center_name"]).strip().casefold(),
+                normalize_warehouse_number(warehouse["warehouse_name"]),
+            )
+            record = by_key.get(key)
+            if record:
+                warehouse.setdefault("lark_power_by_date", {})[date] = record
+                matched_keys.add(key)
+        unmatched = [
+            {
+                "site": record["site"],
+                "warehouse_number": record["warehouse_number"],
+            }
+            for key, record in sorted(by_key.items())
+            if key not in matched_keys
+        ]
+        matched_by_date[date] = {
+            "snapshot_date": date,
+            "schema_version": snapshot["schema_version"],
+            "source": snapshot.get("source"),
+            "synced_at": snapshot.get("synced_at"),
+            "record_count": len(by_key),
+            "matched_warehouses": len(matched_keys),
+            "unmatched_records": unmatched,
+        }
+    if not matched_by_date:
+        return None
+    latest_date = max(matched_by_date)
+    return {
+        "latest_snapshot_date": latest_date,
+        "snapshots": [matched_by_date[date] for date in sorted(matched_by_date)],
+    }
+
+
+def site_lark_power(warehouses, snapshots, date):
+    loaded = snapshots.get(date)
+    if not loaded:
+        return {"available": False, "snapshot_date": date}
+    snapshot, by_key = loaded
+    matched = []
+    for warehouse in warehouses:
         key = (
             str(warehouse["data_center_name"]).strip().casefold(),
             normalize_warehouse_number(warehouse["warehouse_name"]),
         )
         record = by_key.get(key)
         if record:
-            warehouse["lark_power"] = record
-            matched_keys.add(key)
-    unmatched = [
-        {
-            "site": record["site"],
-            "warehouse_number": record["warehouse_number"],
-        }
-        for key, record in sorted(by_key.items())
-        if key not in matched_keys
-    ]
-    if snapshot is None:
-        return None
+            matched.append(record)
     return {
-        "schema_version": snapshot["schema_version"],
-        "source": snapshot.get("source"),
+        "available": True,
+        "snapshot_date": date,
         "synced_at": snapshot.get("synced_at"),
-        "record_count": len(by_key),
-        "matched_warehouses": len(matched_keys),
-        "unmatched_records": unmatched,
+        "matched_warehouses": len(matched),
+        "total_warehouses": len(warehouses),
+        "missing_capacity_warehouses": sum(
+            not isinstance(record.get("mounted_power_kw"), (int, float))
+            for record in matched
+        ),
+        "mounted_power_kw": numeric_sum(matched, "mounted_power_kw"),
+        "reserved_power_kw": numeric_sum(matched, "reserved_power_kw"),
+        "power_limit_kw": numeric_sum(matched, "power_limit_kw"),
+        "mounted_machine_count": int(
+            numeric_sum(matched, "mounted_machine_count")
+        ),
+        "occupied_slots": int(numeric_sum(matched, "occupied_slots")),
+        "total_slots": int(numeric_sum(matched, "total_slots")),
     }
 
 
@@ -266,13 +348,17 @@ def remove_children(directory, keep):
 
 
 def build(summary_root, destination, days=7, end_date=None, detail_root=None,
-          detail_date=None, lark_power_path=None):
+          detail_date=None, lark_power_path=None, lark_history_dir=None):
     """Build all static assets. Raises if discovery or validation fails."""
     summary_root = Path(summary_root)
     destination = Path(destination)
     lark_power_path = (
         Path(lark_power_path) if lark_power_path
         else destination / "data" / "lark_power.json"
+    )
+    lark_history_dir = (
+        Path(lark_history_dir) if lark_history_dir
+        else destination / "data" / "lark_power_history"
     )
     dates, selected = discover_summary_sources(summary_root, days, end_date)
     detail_date = str(detail_date or dates[-1]).replace("-", "")
@@ -320,8 +406,10 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
                 key = (row["data_center_id"], row["hour"], row["warehouse_id"])
                 details[key][level].append(sanitize_detail_row(row))
 
-    lark_snapshot, lark_by_key = load_lark_power(lark_power_path)
-    lark_metadata = attach_lark_power(warehouses, lark_snapshot, lark_by_key)
+    lark_snapshots = load_lark_power_history(
+        lark_history_dir, lark_power_path
+    )
+    lark_metadata = attach_lark_power(warehouses, lark_snapshots)
 
     row_keys = {
         (row["data_center_id"], row["hour"], row["warehouse_id"])
@@ -337,7 +425,11 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
     days_dir.mkdir(parents=True, exist_ok=True)
     details_dir.mkdir(parents=True, exist_ok=True)
     remove_children(
-        data_dir, {"catalog.json", "days", "details", "lark_power.json"}
+        data_dir,
+        {
+            "catalog.json", "days", "details", "lark_power.json",
+            "lark_power_history",
+        },
     )
 
     day_files = set()
@@ -389,6 +481,10 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
             row for (site_id, _), row in warehouses.items()
             if site_id == center_id
         ]
+        site_lark_by_date = {
+            date: site_lark_power(site_warehouses, lark_snapshots, date)
+            for date in sorted(lark_snapshots)
+        }
         site_dates = []
         site_daily = []
         hours_by_date = {}
@@ -427,46 +523,11 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
             "hours_by_date": hours_by_date,
             "warehouse_hours_by_date": warehouse_hours_by_date,
             "daily_summary": site_daily,
-            "lark_power": {
-                "matched_warehouses": sum(
-                    bool(row.get("lark_power")) for row in site_warehouses
-                ),
-                "total_warehouses": len(site_warehouses),
-                "mounted_power_kw": numeric_sum(
-                    [row["lark_power"] for row in site_warehouses
-                     if row.get("lark_power")],
-                    "mounted_power_kw",
-                ),
-                "reserved_power_kw": numeric_sum(
-                    [row["lark_power"] for row in site_warehouses
-                     if row.get("lark_power")],
-                    "reserved_power_kw",
-                ),
-                "power_limit_kw": numeric_sum(
-                    [row["lark_power"] for row in site_warehouses
-                     if row.get("lark_power")],
-                    "power_limit_kw",
-                ),
-                "mounted_machine_count": int(numeric_sum(
-                    [row["lark_power"] for row in site_warehouses
-                     if row.get("lark_power")],
-                    "mounted_machine_count",
-                )),
-                "occupied_slots": int(numeric_sum(
-                    [row["lark_power"] for row in site_warehouses
-                     if row.get("lark_power")],
-                    "occupied_slots",
-                )),
-                "total_slots": int(numeric_sum(
-                    [row["lark_power"] for row in site_warehouses
-                     if row.get("lark_power")],
-                    "total_slots",
-                )),
-            },
+            "lark_power_by_date": site_lark_by_date,
         })
 
     catalog = {
-        "schema_version": "3.1",
+        "schema_version": "3.2",
         "purpose": "rolling_public_multisite_warehouse_hourly_dashboard",
         "date_range": {
             "start": iso_date(dates[0]),
@@ -525,8 +586,7 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
         f"Published {len(site_rows)} sites, {len(dates)} days, "
         f"{len(all_rows)} warehouse hours; details for {len(bundles)} "
         f"warehouse-days on {iso_date(detail_date)}; Lark "
-        f"{lark_metadata['matched_warehouses'] if lark_metadata else 0}/"
-        f"{lark_metadata['record_count'] if lark_metadata else 0} matched "
+        f"{len(lark_snapshots)} dated snapshot(s) "
         f"to {destination.resolve()}"
     )
 
@@ -548,6 +608,14 @@ def main():
         type=Path,
         help="Lark power snapshot; defaults to DESTINATION/data/lark_power.json",
     )
+    parser.add_argument(
+        "--lark-history-dir",
+        type=Path,
+        help=(
+            "Dated Lark snapshots; defaults to "
+            "DESTINATION/data/lark_power_history"
+        ),
+    )
     args = parser.parse_args()
     build(
         args.summary_root,
@@ -557,6 +625,7 @@ def main():
         detail_root=args.detail_root,
         detail_date=args.detail_date,
         lark_power_path=args.lark_power,
+        lark_history_dir=args.lark_history_dir,
     )
 
 

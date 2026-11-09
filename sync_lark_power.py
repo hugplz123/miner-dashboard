@@ -13,6 +13,7 @@ DEFAULT_TABLE_ID = "tblNq169SbT5aD2N"
 DEFAULT_VIEW_ID = "vewUWFcYgO"
 DEFAULT_PROFILE = "miner-dashboard"
 DEFAULT_OUTPUT = Path("dashboard") / "data" / "lark_power.json"
+DEFAULT_HISTORY_DIR = Path("dashboard") / "data" / "lark_power_history"
 WAREHOUSE_NUMBER = re.compile(r"^C?0*(\d+)$", re.IGNORECASE)
 
 
@@ -147,6 +148,28 @@ def public_record(item):
     }
 
 
+def parse_snapshot_date(value):
+    if not value:
+        return dt.date.today().isoformat()
+    try:
+        return dt.date.fromisoformat(str(value)).isoformat()
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid snapshot date {value!r}; expected YYYY-MM-DD"
+        ) from exc
+
+
+def write_json_atomic(path, payload):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    temporary.replace(path)
+
+
 def sync(args):
     command = find_lark_command(args.lark_cli)
     items = fetch_records(
@@ -168,28 +191,30 @@ def sync(args):
             record["site"].casefold(), record["warehouse_number"]
         )
     )
+    snapshot_date = parse_snapshot_date(args.snapshot_date)
     payload = {
         "schema_version": "1.0",
         "source": "lark_bitable",
         "base_token": args.base_token,
         "table_id": args.table_id,
         "view_id": args.view_id,
+        "snapshot_date": snapshot_date,
         "synced_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "record_count": len(records),
         "records": records,
     }
     output = Path(args.output)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_suffix(output.suffix + ".tmp")
-    temporary.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
+    history_path = (
+        Path(args.history_dir)
+        / f"{snapshot_date.replace('-', '')}.json"
     )
-    temporary.replace(output)
+    write_json_atomic(output, payload)
+    write_json_atomic(history_path, payload)
     sites = sorted({record["site"] for record in records})
     print(
         f"Synced {len(records)} Lark power records from "
-        f"{len(sites)} sites to {output.resolve()}"
+        f"{len(sites)} sites for {snapshot_date}; latest={output.resolve()} "
+        f"history={history_path.resolve()}"
     )
 
 
@@ -200,6 +225,16 @@ def main():
     parser.add_argument("--table-id", default=DEFAULT_TABLE_ID)
     parser.add_argument("--view-id", default=DEFAULT_VIEW_ID)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument(
+        "--history-dir",
+        type=Path,
+        default=DEFAULT_HISTORY_DIR,
+        help="Directory for dated Lark snapshots (YYYYMMDD.json)",
+    )
+    parser.add_argument(
+        "--snapshot-date",
+        help="Snapshot business date in YYYY-MM-DD; defaults to today",
+    )
     parser.add_argument(
         "--lark-cli",
         help="Optional path to lark-cli.cmd or the Node CLI entry point",

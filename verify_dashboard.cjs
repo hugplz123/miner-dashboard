@@ -72,7 +72,7 @@ function larkKey(site, warehouseNumber) {
 
 function verifyPublishedData() {
   const catalog = readJson(path.join(DATA, "catalog.json"));
-  assert.equal(catalog.schema_version, "3.1");
+  assert.equal(catalog.schema_version, "3.2");
   assert.equal(catalog.date_range.days, 7);
   assert.equal(catalog.available_dates.length, 7);
   assert.deepEqual(catalog.available_dates, [...catalog.available_dates].sort());
@@ -84,6 +84,7 @@ function verifyPublishedData() {
 
   const lark = readJson(path.join(DATA, "lark_power.json"));
   assert.equal(lark.schema_version, "1.0");
+  assert.equal(lark.snapshot_date, "2026-11-08");
   assert.equal(lark.source, "lark_bitable");
   assert.equal(lark.base_token, "VuLLbn5bNaIWkoswngWlyEOygof");
   assert.equal(lark.table_id, "tblNq169SbT5aD2N");
@@ -111,13 +112,22 @@ function verifyPublishedData() {
   }
   assert.deepEqual(larkCounts, EXPECTED_LARK_COUNTS);
   assert.deepEqual(catalog.lark_power, {
-    schema_version: lark.schema_version,
-    source: lark.source,
-    synced_at: lark.synced_at,
-    record_count: lark.record_count,
-    matched_warehouses: lark.record_count,
-    unmatched_records: [],
+    latest_snapshot_date: lark.snapshot_date,
+    snapshots: [{
+      snapshot_date: lark.snapshot_date,
+      schema_version: lark.schema_version,
+      source: lark.source,
+      synced_at: lark.synced_at,
+      record_count: lark.record_count,
+      matched_warehouses: lark.record_count,
+      unmatched_records: [],
+    }],
   });
+  const historyFile = path.join(
+    DATA, "lark_power_history", `${lark.snapshot_date.replaceAll("-", "")}.json`,
+  );
+  assert(fs.existsSync(historyFile), `missing Lark history: ${historyFile}`);
+  assert.deepEqual(readJson(historyFile), lark);
 
   const larkMissing = { Nimrod01: 0, WhiteOak01: 0 };
   for (const record of lark.records) {
@@ -137,26 +147,42 @@ function verifyPublishedData() {
     );
     const expectedLark = larkRecords.get(key);
     if (expectedLark) {
-      assert.deepEqual(warehouse.lark_power, expectedLark);
+      assert.deepEqual(warehouse.lark_power_by_date, {
+        [lark.snapshot_date]: expectedLark,
+      });
       matchedWarehouses += 1;
     }
     else {
-      assert(!("lark_power" in warehouse));
+      assert(!("lark_power_by_date" in warehouse));
     }
   }
   assert.equal(matchedWarehouses, 96);
   assert.equal(larkRecords.size, matchedWarehouses);
 
   for (const site of catalog.sites) {
-    assert.equal(site.lark_power.matched_warehouses,
+    const snapshot = site.lark_power_by_date?.[lark.snapshot_date];
+    assert(snapshot, `missing site Lark snapshot: ${site.data_center_name}`);
+    assert.equal(snapshot.matched_warehouses,
       EXPECTED_LARK_COUNTS[site.data_center_name]);
-    assert.equal(site.lark_power.total_warehouses, site.warehouse_count);
+    assert.equal(snapshot.total_warehouses, site.warehouse_count);
+    for (const date of catalog.available_dates) {
+      if (date !== lark.snapshot_date) {
+        assert(!site.lark_power_by_date[date],
+          `unexpected historical Lark snapshot: ${date}`);
+      }
+    }
   }
   const nimrod02 = catalog.sites.find(site =>
     site.data_center_name === "Nimrod02"
   );
-  assert.equal(nimrod02.lark_power.matched_warehouses, 16);
-  assert.equal(nimrod02.lark_power.total_warehouses, 18);
+  assert.equal(
+    nimrod02.lark_power_by_date[lark.snapshot_date].matched_warehouses,
+    16,
+  );
+  assert.equal(
+    nimrod02.lark_power_by_date[lark.snapshot_date].total_warehouses,
+    18,
+  );
 
   const rowsByDate = new Map();
   let allRows = 0;
@@ -370,6 +396,8 @@ async function verifyBrowser(catalog) {
         .filter(row => row.data_center_id === whiteoak.data_center_id)
         .map(row => row.warehouse_id),
     );
+    const larkSnapshotDate = catalog.lark_power.latest_snapshot_date;
+    assert.equal(larkSnapshotDate, catalog.latest_date);
     assert.equal(await page.locator("#site").inputValue(),
       whiteoak.data_center_id);
     assert.equal(await page.locator("#brand-name").textContent(),
@@ -377,7 +405,34 @@ async function verifyBrowser(catalog) {
     assert.equal(await page.locator("#date option").count(), 7);
     assert.equal(await page.locator(".warehouse-card").count(),
       whiteoakActiveIds.size);
-    assert.equal(await page.locator("#metrics .metric").count(), 6);
+    assert.equal(await page.locator("#metrics .overview-stat").count(), 3);
+    assert.equal(await page.locator("#metrics .overview-support-item").count(), 2);
+    assert.equal(await page.locator(".load-filters button").count(), 3);
+    assert.deepEqual(await page.locator("#sort option").allTextContents(), [
+      "实际功率（由高到低）",
+      "矿箱实际余量（由高到低）",
+      "矿箱号（由高到低）",
+    ]);
+    assert.equal(await page.locator("#sort").inputValue(), "power");
+    assert.equal(await page.locator("#metrics .overview-margin").count(), 3);
+    assert.equal(await page.locator(
+      ".warehouse-card .card-title .status",
+    ).evaluateAll(nodes => nodes.filter(node =>
+      node.textContent.includes("%")
+    ).length), 0);
+    assert((await page.locator(
+      ".warehouse-card .power-comparison-labels",
+    ).first().textContent()).includes("已用"));
+    assert.equal(await page.locator(
+      "#metrics [data-metric='actual'], #metrics [data-metric='mounted'], " +
+      "#metrics [data-metric='reserved']"
+    ).count(), 3);
+    const overviewText = await page.locator("#metrics").textContent();
+    assert(overviewText.includes("上报矿箱"));
+    assert(overviewText.includes("矿机"));
+    assert(!overviewText.includes("超理论小时"));
+    assert(!overviewText.includes("接近理论"));
+    assert(!(await page.locator("body").textContent()).includes("接近理论"));
     assert.equal(await page.locator(".lark-power-panel.unmatched").count(), 0);
     const boxesWithData = await page.locator(
       ".warehouse-card:not(.missing-card)",
@@ -401,6 +456,31 @@ async function verifyBrowser(catalog) {
         )
         .map(row => [row.warehouse_id, row]),
     );
+    const cardIds = () => page.locator(
+      ".warehouse-card:not(.missing-card)",
+    ).evaluateAll(cards => cards.map(card => card.dataset.warehouseId));
+    const sortedRows = (key) => [...selectedRows.values()]
+      .filter(row => !row.missing)
+      .sort((a, b) =>
+        ((b[key] ?? -Infinity) - (a[key] ?? -Infinity))
+        || a.warehouse_name.localeCompare(b.warehouse_name, undefined, {
+          numeric: true,
+        })
+      )
+      .map(row => row.warehouse_id);
+    assert.deepEqual(await cardIds(), sortedRows("actual_power_kw"));
+    await page.locator("#sort").selectOption("available");
+    assert.deepEqual(await cardIds(), sortedRows("available_capacity_kw"));
+    await page.locator("#sort").selectOption("name");
+    assert.deepEqual(await cardIds(), [...selectedRows.values()]
+      .filter(row => !row.missing)
+      .sort((a, b) =>
+        b.warehouse_name.localeCompare(a.warehouse_name, undefined, {
+          numeric: true,
+        })
+      )
+      .map(row => row.warehouse_id));
+    await page.locator("#sort").selectOption("power");
     const cardDistributionTotals = await page.locator(
       ".warehouse-card:not(.missing-card)",
     ).evaluateAll(cards => cards.map(card => ({
@@ -426,6 +506,8 @@ async function verifyBrowser(catalog) {
     }
     assert.equal(await page.locator(".warehouse-card .card-glance").count(),
       boxesWithData);
+    assert.equal(await page.locator(".warehouse-card .power-comparison").count(),
+      await page.locator(".warehouse-card .power-reference").count());
     assert.equal(await page.locator(".warehouse-card .peak-summary").count(),
       boxesWithData);
     assert.equal(await page.locator(".peak-strip").count(), 0);
@@ -434,6 +516,30 @@ async function verifyBrowser(catalog) {
     ));
     assert.equal(await page.locator("#trend .chart-hit").count(), 7);
     assert.equal(await page.locator("#trend .chart-selection").count(), 1);
+    await page.locator("[data-load-filter='below']").click();
+    assert(await page.locator(".warehouse-card").count() > 0);
+    assert.equal(await page.locator(".warehouse-card[data-load-class='below']")
+      .count(), await page.locator(".warehouse-card").count());
+    await page.locator("[data-load-filter='over']").click();
+    assert.equal(await page.locator(".warehouse-card")
+      .count(), await page.locator(".warehouse-card[data-load-class='over']")
+        .count());
+    await page.locator("[data-load-filter='all']").click();
+    assert.equal(await page.locator(".warehouse-card").count(),
+      whiteoakActiveIds.size);
+    await page.locator("[data-trend-metric='power']").click();
+    assert((await page.locator("#trend-title").textContent()).includes("功率趋势"));
+    assert.equal(await page.locator("#trend .chart-line.actual").count(), 1);
+    assert.equal(await page.locator("#trend .chart-line.theory").count(), 1);
+    assert.equal(await page.locator("#trend .chart-line.mounted").count(), 0);
+    assert.equal(await page.locator("#trend .chart-series-point.mounted").count(), 1);
+    assert.equal(await page.locator("#trend-summary .trend-legend > span").count(), 3);
+    assert((await page.locator("#trend-meta").textContent()).includes("日均小时功率"));
+    await page.screenshot({
+      path: path.join(ROOT, "outputs", "dashboard-check", "overview-power.png"),
+      clip: { x: 0, y: 0, width: 1440, height: 900 },
+    });
+    await page.locator("[data-trend-metric='ratio']").click();
     assert(!requests.some(url => /\/data\/[0-9a-f]{32}_\d{10}_/.test(url)));
     const latestDaily = whiteoak.daily_summary.find(item =>
       item.date === catalog.latest_date
@@ -459,9 +565,13 @@ async function verifyBrowser(catalog) {
     ).count(), expectedCoverageWarnings);
 
     await page.locator("[data-trend-mode='hourly']").click();
-    assert.equal(await page.locator("#trend .chart-hit").count(),
-      latestDaily.hours_with_data);
+    assert.equal(await page.locator("#trend .chart-hit").count(), 24);
+    assert.equal(
+      await page.locator("#trend .chart-missing-band").count(),
+      24 - latestDaily.hours_with_data,
+    );
     assert((await page.locator("#trend-summary").textContent()).includes("当前小时"));
+    assert((await page.locator("#trend-meta").textContent()).includes("灰色带"));
     await page.locator("[data-trend-mode='daily']").click();
 
     const chartDate = whiteoak.available_dates[2];
@@ -480,15 +590,31 @@ async function verifyBrowser(catalog) {
     assert.equal(await page.locator(".warehouse-card button:not([disabled])")
       .count(), 0);
     assert((await page.locator("#detail-note").textContent()).includes("历史日期"));
+    assert.equal(await page.locator(".warehouse-card .capacity-row").count(), 0);
+    assert.equal(await page.locator(".warehouse-card .lark-power-panel.snapshot-missing")
+      .count(), await page.locator(".warehouse-card:not(.missing-card)").count());
+    assert((await page.locator("#coverage").textContent()).includes(
+      "没有 Lark 功率快照"
+    ));
 
     const latestDate = whiteoak.available_dates.at(-1);
     await page.selectOption("#date", latestDate);
     await page.waitForFunction(date =>
       document.querySelector("#meta")?.textContent.includes(`当前 ${date}`),
       latestDate);
-    const peakButton = page.locator(".peak-action").first();
-    assert(await peakButton.isEnabled());
-    const peakId = await peakButton.getAttribute("data-peak-id");
+    const peakHourButton = page.locator(".peak-hour-action").first();
+    const dailyMachineButton = page.locator(".peak-machine-action").first();
+    assert(await peakHourButton.isEnabled());
+    assert(await dailyMachineButton.isEnabled());
+    assert.equal(await page.locator(".peak-hour-action").count(), boxesWithData);
+    assert.equal(await page.locator(".peak-machine-action").count(), boxesWithData);
+    const peakId = await peakHourButton.getAttribute("data-peak-hour-id");
+    const stablePeakHourButton = page.locator(
+      `.peak-hour-action[data-peak-hour-id="${peakId}"]`,
+    );
+    const stableDailyMachineButton = page.locator(
+      `.peak-machine-action[data-daily-machine-id="${peakId}"]`,
+    );
     const peakRows = latestDayRows.filter(row =>
       row.data_center_id === whiteoak.data_center_id
       && row.warehouse_id === peakId
@@ -505,36 +631,75 @@ async function verifyBrowser(catalog) {
       latestDate.replaceAll("-", ""),
       `${peakId}.json.gz`,
     ));
-    const peakMachine = peakDetail.hours[String(peak.hour)].machine_rows
-      .reduce((best, machine) =>
-        !best || machine.avg_power_w > best.avg_power_w ? machine : best,
-      null);
-    assert(peakMachine, "peak machine not found");
-    await peakButton.click();
+    const dayPeakMachine = Object.entries(peakDetail.hours).reduce(
+      (best, [hour, data]) => {
+        const machine = data.machine_rows.reduce((candidate, item) =>
+          !candidate || item.avg_power_w > candidate.avg_power_w
+            ? item : candidate,
+        null);
+        return machine && (!best
+          || machine.avg_power_w > best.machine.avg_power_w)
+          ? { hour: Number(hour), machine }
+          : best;
+      },
+      null,
+    );
+    assert(dayPeakMachine, "daily peak machine not found");
+    const nonPeakHour = [...new Set(latestDayRows
+      .filter(row => row.data_center_id === whiteoak.data_center_id)
+      .map(row => row.hour))].find(hour => hour !== peak.hour);
+    assert.notEqual(nonPeakHour, undefined);
+    await page.selectOption("#hour", String(nonPeakHour));
+    const pageHourBeforePeak = await page.locator("#hour").inputValue();
+    await stablePeakHourButton.click();
     await page.waitForSelector("#detail-content tbody tr");
-    assert.equal(await page.locator("#hour").inputValue(), String(peak.hour));
+    assert.equal(await page.locator("#hour").inputValue(), pageHourBeforePeak);
     assert(await page.locator("#detail").evaluate(dialog => dialog.open));
+    assert((await page.locator("#detail-title").textContent()).includes(
+      "当日峰值小时"
+    ));
     assert.equal(
-      await page.locator('[data-level="machine_rows"]')
+      await page.locator('[data-level="template_rows"]')
         .getAttribute("aria-selected"),
       "true",
     );
     assert((await page.locator("#detail-meta").textContent()).includes(
       `${String(peak.hour).slice(8)}:00`
     ));
+    assert.equal(await page.locator(".peak-machine-callout").count(), 0);
     assert.equal(await page.locator("#detail-metrics .metric").count(), 8);
     const detailMetricsText = await page.locator("#detail-metrics").textContent();
     assert(detailMetricsText.includes("单机理论平均功率"));
+    assert(detailMetricsText.includes("理论 − 实际"));
     assert(!(await page.locator("#detail-capacity .lark-panel-foot")
       .textContent()).includes("单机理论平均"));
+    await page.locator("#close").click();
+
+    await stableDailyMachineButton.click();
+    await page.waitForSelector(".peak-machine-callout");
+    assert.equal(await page.locator("#hour").inputValue(), pageHourBeforePeak);
+    assert(await page.locator("#detail").evaluate(dialog => dialog.open));
+    assert((await page.locator("#detail-title").textContent()).includes(
+      "当日最大功率矿机"
+    ));
+    assert.equal(
+      await page.locator('[data-level="machine_rows"]')
+        .getAttribute("aria-selected"),
+      "true",
+    );
+    assert((await page.locator("#detail-meta").textContent()).includes(
+      `${String(dayPeakMachine.hour).slice(8)}:00`
+    ));
     assert((await page.locator(".peak-machine-callout").textContent())
-      .includes(peakMachine.model));
+      .includes("当日最大功率矿机"));
     assert((await page.locator(".peak-machine-callout").textContent())
-      .includes(peakMachine.ip));
+      .includes(dayPeakMachine.machine.model));
+    assert((await page.locator(".peak-machine-callout").textContent())
+      .includes(dayPeakMachine.machine.ip));
     assert.equal(await page.locator("#detail-content tbody tr").first()
       .getAttribute("class"), "peak-machine-row");
     assert((await page.locator("#detail-content tbody tr").first().textContent())
-      .includes(peakMachine.ip));
+      .includes(dayPeakMachine.machine.ip));
     await page.screenshot({
       path: path.join(ROOT, "outputs", "dashboard-check", "peak-machine.png"),
       fullPage: true,
@@ -602,8 +767,8 @@ async function verifyBrowser(catalog) {
     const missingCapacity = catalog.warehouses.find(warehouse =>
       warehouse.data_center_name === "Nimrod01"
       && nimrodActiveIds.has(warehouse.warehouse_id)
-      && warehouse.lark_power
-      && warehouse.lark_power.mounted_power_kw == null
+      && warehouse.lark_power_by_date?.[larkSnapshotDate]
+      && warehouse.lark_power_by_date[larkSnapshotDate].mounted_power_kw == null
     );
     assert(missingCapacity, "active missing-capacity warehouse not found");
     const missingCard = page.locator(
@@ -684,7 +849,9 @@ async function verifyBrowser(catalog) {
       document.querySelector("#meta")?.textContent.includes(`当前 ${date}`),
       raceDate);
     await racePage.waitForTimeout(3500);
-    const racePower = await racePage.locator("#metrics .metric-value").first()
+    const racePower = await racePage.locator(
+      "#metrics [data-metric='actual'] .overview-value"
+    )
       .textContent();
     assert(!racePower.trim().startsWith("0"),
       "a late day response overwrote the newly selected day");
@@ -693,9 +860,14 @@ async function verifyBrowser(catalog) {
     await racePage.close();
 
     await page.setViewportSize({ width: 390, height: 844 });
+    await page.evaluate(() => scrollTo(0, 0));
     assert(await page.evaluate(() =>
       document.documentElement.scrollWidth <= innerWidth
     ));
+    await page.screenshot({
+      path: path.join(ROOT, "outputs", "dashboard-check", "overview-mobile.png"),
+      clip: { x: 0, y: 0, width: 390, height: 1100 },
+    });
     assert(await page.evaluate(() =>
       [...document.querySelectorAll(".warehouse-card")].every(card => {
         const box = card.getBoundingClientRect();
@@ -706,7 +878,7 @@ async function verifyBrowser(catalog) {
       path: path.join(ROOT, "outputs", "dashboard-check", "mobile.png"),
       fullPage: true,
     });
-    await page.locator(".peak-action").first().click();
+    await page.locator(".peak-machine-action").first().click();
     await page.waitForSelector(".peak-machine-callout");
     assert(await page.evaluate(() =>
       document.documentElement.scrollWidth <= innerWidth

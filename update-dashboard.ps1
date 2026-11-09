@@ -38,8 +38,22 @@ function Push-Dashboard($git) {
     throw "Dashboard was committed locally, but git push failed."
 }
 
-# Refresh the public Lark capacity snapshot before rebuilding the static site.
-& python sync_lark_power.py
+# Refresh and archive the public Lark capacity snapshot for the completed day.
+if ($Date) {
+    try {
+        $snapshotDate = [datetime]::ParseExact(
+            $Date, "yyyyMMdd", $null
+        ).ToString("yyyy-MM-dd")
+    }
+    catch {
+        throw "Date must use YYYYMMDD, for example 20261108."
+    }
+}
+else {
+    $snapshotDate = (Get-Date).Date.AddDays(-1).ToString("yyyy-MM-dd")
+}
+
+& python sync_lark_power.py --snapshot-date $snapshotDate
 if ($LASTEXITCODE -ne 0) {
     $larkSnapshot = "dashboard\data\lark_power.json"
     if (Test-Path -LiteralPath $larkSnapshot) {
