@@ -148,6 +148,15 @@ function dailyFor(date, site = currentSite()) {
   return (site?.daily_summary || []).find(item => item.date === date);
 }
 
+function siteTheoreticalPower(item = dailyFor(selectedDate)) {
+  const configured = Number(item?.configured_theoretical_power_kw);
+  if (Number.isFinite(configured)) return configured;
+  const observed = item?.hours_with_data ?? item?.hours?.length;
+  const legacyTotal = Number(item?.theoretical_power_kw);
+  return Number.isFinite(legacyTotal) && observed
+    ? legacyTotal / observed : null;
+}
+
 function warehouseHours(warehouseId, date = selectedDate, site = currentSite()) {
   const recorded = site?.warehouse_hours_by_date?.[date]?.[warehouseId];
   if (Array.isArray(recorded)) return recorded.length;
@@ -627,7 +636,8 @@ function render() {
   const activeWarehouseCount = visibleWarehouses.length;
   const machineCount = sum(currentRows, "machine_count");
   const actualPower = sum(currentRows, "actual_power_kw");
-  const theoryPower = sum(currentRows, "theoretical_power_kw");
+  const theoryPower = siteTheoreticalPower(dailyFor(selectedDate, site))
+    ?? sum(currentRows, "theoretical_power_kw");
   const validSamples = sum(currentRows, "power_ratio_sample_count");
   const lark = larkPowerSnapshot(site, selectedDate);
   const reportedBoxes = new Set(currentRows.map(row => row.warehouse_id)).size;
@@ -751,8 +761,7 @@ function dailySeries() {
       ratio: item.power_ratio_overall_w_per_th,
       actualPower: finite(item.actual_power_kw) && observed
         ? item.actual_power_kw / observed : null,
-      theoreticalPower: finite(item.theoretical_power_kw) && observed
-        ? item.theoretical_power_kw / observed : null,
+      theoreticalPower: siteTheoreticalPower(item),
       mountedPower: larkPowerSnapshot(site, item.date).mountedPower,
       detail: item,
       complete,
@@ -764,6 +773,7 @@ function dailySeries() {
 function hourlySeries() {
   const site = currentSite();
   const lark = larkPowerSnapshot(site, selectedDate);
+  const theoryPower = siteTheoreticalPower();
   const recordedHours = new Set(hours.map(Number));
   return Array.from({ length: expectedHoursPerDay }, (_, index) => {
     const hour = Number(`${compactDate(selectedDate)}${String(index).padStart(2, "0")}`);
@@ -776,7 +786,7 @@ function hourlySeries() {
       label: `${String(hour).slice(-2)}:00`,
       ratio: ratio(rows),
       actualPower: hasData ? sum(rows, "actual_power_kw") : null,
-      theoreticalPower: hasData ? sum(rows, "theoretical_power_kw") : null,
+      theoreticalPower: hasData ? theoryPower : null,
       mountedPower: lark.available ? lark.mountedPower : null,
       detail: {
         machine_count: sum(rows, "machine_count"),

@@ -318,6 +318,13 @@ function verifyPublishedData() {
       sum(rows, "theoretical_power_kw"),
       daily.theoretical_power_kw,
     ));
+    const configuredTheory = [...new Map(
+      rows
+        .filter(row => Number.isFinite(row.theoretical_power_kw))
+        .map(row => [row.warehouse_id, row.theoretical_power_kw]),
+    ).values()].reduce((total, value) => total + value, 0);
+    assert(close(configuredTheory, daily.configured_theoretical_power_kw));
+    assert(Number.isInteger(daily.configured_theoretical_power_kw));
     assert(close(expectedOverallRatio(rows), daily.power_ratio_overall_w_per_th));
   }
 
@@ -587,6 +594,17 @@ async function verifyBrowser(catalog) {
     assert.equal(await page.locator("#trend .chart-series-point.mounted").count(), 0);
     assert.equal(await page.locator("#trend-summary .trend-legend > span").count(), 3);
     assert((await page.locator("#trend-meta").textContent()).includes("日均小时功率"));
+    const dailyTheoryPowers = await page.evaluate(() =>
+      dailySeries().map(item => item.theoreticalPower)
+    );
+    assert(dailyTheoryPowers.every(Number.isFinite));
+    assert.equal(new Set(dailyTheoryPowers).size, 1);
+    assert(Number.isInteger(dailyTheoryPowers[0]));
+    const hourlyTheoryPowers = await page.evaluate(() =>
+      hourlySeries().map(item => item.theoreticalPower).filter(Number.isFinite)
+    );
+    assert.equal(new Set(hourlyTheoryPowers).size, 1);
+    assert.equal(hourlyTheoryPowers[0], dailyTheoryPowers[0]);
     await page.screenshot({
       path: path.join(ROOT, "outputs", "dashboard-check", "overview-power.png"),
       clip: { x: 0, y: 0, width: 1440, height: 900 },

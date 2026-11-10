@@ -254,6 +254,12 @@ def sanitize_detail_row(row):
 def daily_totals(site_id, site_name, date, rows, warehouse_count):
     valid_power = numeric_sum(rows, "power_ratio_valid_power_sum_w")
     valid_hashrate = numeric_sum(rows, "power_ratio_valid_hashrate_sum_ths")
+    theoretical_by_warehouse = {}
+    for row in rows:
+        warehouse_id = row["warehouse_id"]
+        theoretical = row.get("theoretical_power_kw")
+        if theoretical is not None:
+            theoretical_by_warehouse.setdefault(warehouse_id, theoretical)
     hours = sorted({int(row["hour"]) for row in rows})
     warehouse_hours = defaultdict(set)
     for row in rows:
@@ -303,6 +309,9 @@ def daily_totals(site_id, site_name, date, rows, warehouse_count):
         ),
         "actual_power_kw": numeric_sum(rows, "actual_power_kw"),
         "theoretical_power_kw": numeric_sum(rows, "theoretical_power_kw"),
+        "configured_theoretical_power_kw": sum(
+            theoretical_by_warehouse.values()
+        ),
         "available_capacity_kw": numeric_sum(rows, "available_capacity_kw"),
         "power_ratio_valid_power_sum_w": valid_power,
         "power_ratio_valid_hashrate_sum_ths": valid_hashrate,
