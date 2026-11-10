@@ -4,7 +4,8 @@
   "base_token": "VuLLbn5bNaIWkoswngWlyEOygof",
   "table_id": "tblNq169SbT5aD2N",
   "view_id": "vewUWFcYgO",
-  "synced_at": "2026-11-09T10:32:42.200022+08:00",
+  "snapshot_date": "2026-11-09",
+  "synced_at": "2026-11-10T02:42:47.353018+00:00",
   "record_count": 96,
   "records": [
     {
@@ -322,15 +323,15 @@
     {
       "site": "Nimrod01",
       "warehouse_number": 3,
-      "mounted_power_kw": 465.52,
+      "mounted_power_kw": 462.875,
       "reserved_power_kw": 484.035,
       "unit_theoretical_power_kw": 2.645,
       "power_limit_kw": 657.0,
-      "mounted_machine_count": 176,
+      "mounted_machine_count": 175,
       "occupied_slots": 183,
       "total_slots": 189,
       "vacant_slots": 6,
-      "offline_machine_count": 7
+      "offline_machine_count": 8
     },
     {
       "site": "Nimrod01",
@@ -1255,6 +1256,5 @@
       "vacant_slots": 0,
       "offline_machine_count": 1
     }
-  ],
-  "snapshot_date": "2026-11-08"
+  ]
 }

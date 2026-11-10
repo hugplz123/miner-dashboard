@@ -83,93 +83,120 @@ function verifyPublishedData() {
   assert.deepEqual(catalog.detail_dates, [catalog.latest_date]);
 
   const lark = readJson(path.join(DATA, "lark_power.json"));
-  assert.equal(lark.schema_version, "1.0");
-  assert.equal(lark.snapshot_date, "2026-11-08");
-  assert.equal(lark.source, "lark_bitable");
-  assert.equal(lark.base_token, "VuLLbn5bNaIWkoswngWlyEOygof");
-  assert.equal(lark.table_id, "tblNq169SbT5aD2N");
-  assert.equal(lark.view_id, "vewUWFcYgO");
-  assert(Number.isFinite(Date.parse(lark.synced_at)));
-  assert.equal(lark.record_count, 96);
-  assert.equal(lark.records.length, lark.record_count);
-  assert(!/SourceID|ip[_ -]?range|IP范围|app[_ -]?secret/i.test(
-    JSON.stringify(lark),
-  ));
+  const larkHistoryDir = path.join(DATA, "lark_power_history");
+  const larkHistoryFiles = fs.readdirSync(larkHistoryDir)
+    .filter(name => /^\d{8}\.json$/.test(name))
+    .sort();
+  assert(larkHistoryFiles.length > 0, "missing dated Lark snapshots");
+  const larkSnapshots = new Map();
+  const larkRecordsByDate = new Map();
+  const larkCatalogSnapshots = [];
+  for (const fileName of larkHistoryFiles) {
+    const file = path.join(larkHistoryDir, fileName);
+    const snapshot = fileName ===
+      `${lark.snapshot_date.replaceAll("-", "")}.json`
+      ? lark
+      : readJson(file);
+    const expectedDate = `${fileName.slice(0, 4)}-${fileName.slice(4, 6)}-` +
+      fileName.slice(6, 8);
+    assert.equal(snapshot.schema_version, "1.0");
+    assert.equal(snapshot.snapshot_date, expectedDate);
+    assert.equal(snapshot.source, "lark_bitable");
+    assert.equal(snapshot.base_token, "VuLLbn5bNaIWkoswngWlyEOygof");
+    assert.equal(snapshot.table_id, "tblNq169SbT5aD2N");
+    assert.equal(snapshot.view_id, "vewUWFcYgO");
+    assert(Number.isFinite(Date.parse(snapshot.synced_at)));
+    assert.equal(snapshot.record_count, 96);
+    assert.equal(snapshot.records.length, snapshot.record_count);
+    assert(!/SourceID|ip[_ -]?range|IP范围|app[_ -]?secret/i.test(
+      JSON.stringify(snapshot),
+    ));
 
-  const larkCounts = Object.fromEntries(
-    Object.keys(EXPECTED_LARK_COUNTS).map(site => [site, 0]),
-  );
-  const larkRecords = new Map();
-  for (const record of lark.records) {
-    assert.deepEqual(Object.keys(record).sort(), LARK_RECORD_FIELDS);
-    assert(EXPECTED_SITES.includes(record.site));
-    assert(Number.isInteger(record.warehouse_number));
-    assert(record.warehouse_number > 0);
-    const key = larkKey(record.site, record.warehouse_number);
-    assert(!larkRecords.has(key), `duplicate Lark warehouse key: ${key}`);
-    larkRecords.set(key, record);
-    larkCounts[record.site] += 1;
+    const larkCounts = Object.fromEntries(
+      Object.keys(EXPECTED_LARK_COUNTS).map(site => [site, 0]),
+    );
+    const larkRecords = new Map();
+    for (const record of snapshot.records) {
+      assert.deepEqual(Object.keys(record).sort(), LARK_RECORD_FIELDS);
+      assert(EXPECTED_SITES.includes(record.site));
+      assert(Number.isInteger(record.warehouse_number));
+      assert(record.warehouse_number > 0);
+      const key = larkKey(record.site, record.warehouse_number);
+      assert(!larkRecords.has(key), `duplicate Lark warehouse key: ${key}`);
+      larkRecords.set(key, record);
+      larkCounts[record.site] += 1;
+    }
+    assert.deepEqual(larkCounts, EXPECTED_LARK_COUNTS);
+    larkSnapshots.set(expectedDate, snapshot);
+    larkRecordsByDate.set(expectedDate, larkRecords);
+    larkCatalogSnapshots.push({
+      snapshot_date: snapshot.snapshot_date,
+      schema_version: snapshot.schema_version,
+      source: snapshot.source,
+      synced_at: snapshot.synced_at,
+      record_count: snapshot.record_count,
+      matched_warehouses: snapshot.record_count,
+      unmatched_records: [],
+    });
+
+    const larkMissing = { Nimrod01: 0, WhiteOak01: 0 };
+    for (const record of snapshot.records) {
+      if (!Number.isFinite(record.mounted_power_kw)) {
+        assert(Object.hasOwn(larkMissing, record.site));
+        larkMissing[record.site] += 1;
+      }
+    }
+    assert.deepEqual(larkMissing, { Nimrod01: 3, WhiteOak01: 1 });
   }
-  assert.deepEqual(larkCounts, EXPECTED_LARK_COUNTS);
+  assert.deepEqual(
+    [...larkSnapshots.keys()],
+    [...larkSnapshots.keys()].sort(),
+  );
+  assert.equal(larkSnapshots.size, larkCatalogSnapshots.length);
+  assert(larkSnapshots.has(lark.snapshot_date), "latest Lark snapshot missing");
+  assert.equal([...larkSnapshots.keys()].at(-1), lark.snapshot_date);
+  assert.deepEqual(readJson(path.join(
+    larkHistoryDir,
+    `${lark.snapshot_date.replaceAll("-", "")}.json`,
+  )), lark);
   assert.deepEqual(catalog.lark_power, {
     latest_snapshot_date: lark.snapshot_date,
-    snapshots: [{
-      snapshot_date: lark.snapshot_date,
-      schema_version: lark.schema_version,
-      source: lark.source,
-      synced_at: lark.synced_at,
-      record_count: lark.record_count,
-      matched_warehouses: lark.record_count,
-      unmatched_records: [],
-    }],
+    snapshots: larkCatalogSnapshots,
   });
-  const historyFile = path.join(
-    DATA, "lark_power_history", `${lark.snapshot_date.replaceAll("-", "")}.json`,
-  );
-  assert(fs.existsSync(historyFile), `missing Lark history: ${historyFile}`);
-  assert.deepEqual(readJson(historyFile), lark);
-
-  const larkMissing = { Nimrod01: 0, WhiteOak01: 0 };
-  for (const record of lark.records) {
-    if (!Number.isFinite(record.mounted_power_kw)) {
-      assert(Object.hasOwn(larkMissing, record.site));
-      larkMissing[record.site] += 1;
-    }
-  }
-  assert.deepEqual(larkMissing, { Nimrod01: 3, WhiteOak01: 1 });
 
   assert.equal(catalog.warehouses.length, 98);
   let matchedWarehouses = 0;
   for (const warehouse of catalog.warehouses) {
-    const key = larkKey(
-      warehouse.data_center_name,
-      normalizeWarehouseNumber(warehouse.warehouse_name),
-    );
-    const expectedLark = larkRecords.get(key);
-    if (expectedLark) {
-      assert.deepEqual(warehouse.lark_power_by_date, {
-        [lark.snapshot_date]: expectedLark,
-      });
-      matchedWarehouses += 1;
+    const expectedLarkByDate = {};
+    for (const [date, records] of larkRecordsByDate) {
+      const key = larkKey(
+        warehouse.data_center_name,
+        normalizeWarehouseNumber(warehouse.warehouse_name),
+      );
+      const expectedLark = records.get(key);
+      if (expectedLark) expectedLarkByDate[date] = expectedLark;
     }
-    else {
+    if (Object.keys(expectedLarkByDate).length) {
+      assert.deepEqual(warehouse.lark_power_by_date, expectedLarkByDate);
+      if (expectedLarkByDate[lark.snapshot_date]) matchedWarehouses += 1;
+    } else {
       assert(!("lark_power_by_date" in warehouse));
     }
   }
   assert.equal(matchedWarehouses, 96);
-  assert.equal(larkRecords.size, matchedWarehouses);
+  assert.equal(larkRecordsByDate.get(lark.snapshot_date).size, matchedWarehouses);
 
   for (const site of catalog.sites) {
-    const snapshot = site.lark_power_by_date?.[lark.snapshot_date];
-    assert(snapshot, `missing site Lark snapshot: ${site.data_center_name}`);
-    assert.equal(snapshot.matched_warehouses,
-      EXPECTED_LARK_COUNTS[site.data_center_name]);
-    assert.equal(snapshot.total_warehouses, site.warehouse_count);
-    for (const date of catalog.available_dates) {
-      if (date !== lark.snapshot_date) {
-        assert(!site.lark_power_by_date[date],
-          `unexpected historical Lark snapshot: ${date}`);
-      }
+    assert.deepEqual(
+      Object.keys(site.lark_power_by_date || {}).sort(),
+      [...larkSnapshots.keys()],
+    );
+    for (const date of larkSnapshots.keys()) {
+      const snapshot = site.lark_power_by_date?.[date];
+      assert(snapshot, `missing site Lark snapshot: ${date} ${site.data_center_name}`);
+      assert.equal(snapshot.matched_warehouses,
+        EXPECTED_LARK_COUNTS[site.data_center_name]);
+      assert.equal(snapshot.total_warehouses, site.warehouse_count);
     }
   }
   const nimrod02 = catalog.sites.find(site =>
@@ -442,11 +469,14 @@ async function verifyBrowser(catalog) {
     assert.equal(await page.locator(".warehouse-card .capacity-row").count(),
       boxesWithData * 2);
     assert.equal(await page.locator(
-      ".warehouse-card .card-distributions .distribution-block",
-    ).count(), boxesWithData * 2);
+      ".warehouse-card .distribution-trigger",
+    ).count(), boxesWithData);
     assert.equal(await page.locator(
-      ".warehouse-card .distribution-track",
-    ).count(), boxesWithData * 2);
+      ".warehouse-card .card-distributions",
+    ).count(), 0);
+    assert(await page.locator(
+      ".warehouse-card [data-distribution-id]:not([disabled])",
+    ).count() > 0);
     const selectedHour = Number(await page.locator("#hour").inputValue());
     const selectedRows = new Map(
       latestDayRows
@@ -481,29 +511,51 @@ async function verifyBrowser(catalog) {
       )
       .map(row => row.warehouse_id));
     await page.locator("#sort").selectOption("power");
-    const cardDistributionTotals = await page.locator(
-      ".warehouse-card:not(.missing-card)",
-    ).evaluateAll(cards => cards.map(card => ({
-      id: card.dataset.warehouseId,
-      totals: Object.fromEntries(
-        [...card.querySelectorAll(".distribution-block")].map(block => [
-          block.dataset.distribution,
-          Number(block.dataset.total || 0),
+    const distributionButton = page.locator(
+      ".warehouse-card [data-distribution-id]:not([disabled])",
+    ).first();
+    const distributionId = await distributionButton
+      .getAttribute("data-distribution-id");
+    const distributionSource = selectedRows.get(distributionId);
+    assert(distributionSource, `distribution source missing for ${distributionId}`);
+    await distributionButton.click();
+    assert(await page.locator("#distribution").evaluate(dialog => dialog.open));
+    assert((await page.locator("#distribution-title").textContent()).includes(
+      distributionSource.warehouse_name
+    ));
+    assert((await page.locator("#distribution-meta").textContent()).includes(
+      "WhiteOak01"
+    ));
+    assert.equal(await page.locator(
+      "#distribution-summary > div",
+    ).count(), 3);
+    assert.equal(await page.locator(
+      "#distribution-charts .distribution-chart",
+    ).count(), 2);
+    const distributionTotals = Object.fromEntries(
+      await page.locator("#distribution-charts .distribution-chart").evaluateAll(
+        charts => charts.map(chart => [
+          chart.dataset.distribution,
+          Number(chart.dataset.total || 0),
         ]),
       ),
-    })));
-    for (const card of cardDistributionTotals) {
-      const source = selectedRows.get(card.id);
-      assert(source, `selected hour row missing for ${card.id}`);
-      assert.equal(
-        card.totals.template_name,
-        sum(source.templates || [], "machine_count"),
-      );
-      assert.equal(
-        card.totals.work_mode,
-        sum(source.work_modes || [], "machine_count"),
-      );
-    }
+    );
+    assert.equal(
+      distributionTotals.template_name,
+      sum(distributionSource.templates || [], "machine_count"),
+    );
+    assert.equal(
+      distributionTotals.work_mode,
+      sum(distributionSource.work_modes || [], "machine_count"),
+    );
+    await page.locator("#distribution-close").click();
+    assert(!(await page.locator("#distribution").evaluate(dialog => dialog.open)));
+    await distributionButton.click();
+    await page.locator("#distribution-detail").click();
+    assert(!(await page.locator("#distribution").evaluate(dialog => dialog.open)));
+    await page.waitForSelector("#detail-content tbody tr");
+    assert(await page.locator("#detail").evaluate(dialog => dialog.open));
+    await page.locator("#close").click();
     assert.equal(await page.locator(".warehouse-card .card-glance").count(),
       boxesWithData);
     assert.equal(await page.locator(".warehouse-card .power-comparison").count(),
@@ -531,8 +583,8 @@ async function verifyBrowser(catalog) {
     assert((await page.locator("#trend-title").textContent()).includes("功率趋势"));
     assert.equal(await page.locator("#trend .chart-line.actual").count(), 1);
     assert.equal(await page.locator("#trend .chart-line.theory").count(), 1);
-    assert.equal(await page.locator("#trend .chart-line.mounted").count(), 0);
-    assert.equal(await page.locator("#trend .chart-series-point.mounted").count(), 1);
+    assert.equal(await page.locator("#trend .chart-line.mounted").count(), 1);
+    assert.equal(await page.locator("#trend .chart-series-point.mounted").count(), 0);
     assert.equal(await page.locator("#trend-summary .trend-legend > span").count(), 3);
     assert((await page.locator("#trend-meta").textContent()).includes("日均小时功率"));
     await page.screenshot({
@@ -587,8 +639,20 @@ async function verifyBrowser(catalog) {
     await page.waitForFunction(date =>
       document.querySelector("#meta")?.textContent.includes(`当前 ${date}`),
       firstDate);
-    assert.equal(await page.locator(".warehouse-card button:not([disabled])")
-      .count(), 0);
+    assert.equal(await page.locator(
+      ".warehouse-card .card-head button:not([disabled])",
+    ).count(), 0);
+    assert.equal(await page.locator(
+      ".warehouse-card .peak-actions button:not([disabled])",
+    ).count(), 0);
+    assert(await page.locator(
+      ".warehouse-card [data-distribution-id]:not([disabled])",
+    ).count() > 0);
+    await page.locator(
+      ".warehouse-card [data-distribution-id]:not([disabled])",
+    ).first().click();
+    assert(await page.locator("#distribution-detail").isDisabled());
+    await page.locator("#distribution-close").click();
     assert((await page.locator("#detail-note").textContent()).includes("历史日期"));
     assert.equal(await page.locator(".warehouse-card .capacity-row").count(), 0);
     assert.equal(await page.locator(".warehouse-card .lark-power-panel.snapshot-missing")
@@ -878,6 +942,24 @@ async function verifyBrowser(catalog) {
       path: path.join(ROOT, "outputs", "dashboard-check", "mobile.png"),
       fullPage: true,
     });
+    await page.locator(
+      ".warehouse-card [data-distribution-id]:not([disabled])",
+    ).first().click();
+    assert(await page.locator("#distribution").evaluate(dialog => dialog.open));
+    assert.equal(await page.locator(
+      "#distribution-summary > div",
+    ).count(), 3);
+    assert.equal(await page.locator(
+      "#distribution-charts .distribution-chart",
+    ).count(), 2);
+    assert(await page.evaluate(() =>
+      document.documentElement.scrollWidth <= innerWidth
+    ));
+    await page.screenshot({
+      path: path.join(ROOT, "outputs", "dashboard-check", "mobile-distribution.png"),
+      fullPage: true,
+    });
+    await page.locator("#distribution-close").click();
     await page.locator(".peak-machine-action").first().click();
     await page.waitForSelector(".peak-machine-callout");
     assert(await page.evaluate(() =>
@@ -905,7 +987,7 @@ async function verifyBrowser(catalog) {
     `${lark.record_count} Lark power records; ` +
     (DATA_ONLY
       ? "data and lazy gzip details"
-      : "data, lazy gzip details, Lark matching, peak drill-down, charts, site/date switching and mobile layout"),
+      : "data, lazy gzip details, Lark matching, distribution dialogs, peak drill-down, charts, site/date switching and mobile layout"),
   );
 })().catch(error => {
   console.error(error);

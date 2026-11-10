@@ -15,6 +15,7 @@ let catalog, sites = [], warehouses = [], dates = [], hours = [], currentRows = 
 let selectedDate, dayData, detailData, detailBundle, level = "template_rows";
 let requestVersion = 0, dayRequestVersion = 0, trendMode = "daily";
 let trendMetric = "ratio", trendState = null, loadFilter = "all";
+let distributionWarehouseId = null;
 const dayCache = new Map();
 const detailCache = new Map();
 
@@ -294,54 +295,131 @@ function setLoading(active, text = "") {
   document.querySelector("main").classList.toggle("is-loading", active);
 }
 
-function distributionHTML(title, items, nameKey, emptyLabel) {
-  const colors = ["#4f8f7a", "#d09a43", "#5b7fa6", "#bb6b55", "#758b66"];
-  const sorted = [...(items || [])]
-    .filter(item => Number(item.machine_count) > 0)
-    .sort((a, b) => b.machine_count - a.machine_count);
-  const total = sorted.reduce(
-    (sum, item) => sum + Number(item.machine_count || 0),
-    0,
-  );
-  if (!total) {
-    return `<section class="distribution-block" data-distribution="${nameKey}">
-      <div class="distribution-head"><span>${title}</span><b>暂无数据</b></div>
-      <div class="distribution-empty">${emptyLabel}</div>
+function groupDistribution(items, nameKey, emptyLabel) {
+  const grouped = new Map();
+  for (const item of items || []) {
+    const count = Number(item.machine_count || 0);
+    if (!(count > 0)) continue;
+    const label = item[nameKey]
+      || (nameKey === "template_name" ? "未分组" : "未记录");
+    grouped.set(label, (grouped.get(label) || 0) + count);
+  }
+  const categories = [...grouped.entries()]
+    .map(([label, count], index) => ({
+      label,
+      count,
+      color: palette[index % palette.length],
+    }))
+    .sort((a, b) => b.count - a.count)
+    .map((item, index) => ({
+      ...item,
+      color: palette[index % palette.length],
+    }));
+  const total = categories.reduce((value, item) => value + item.count, 0);
+  return { categories, total, emptyLabel };
+}
+
+function donutGradient(distribution) {
+  let offset = 0;
+  return distribution.categories.map(item => {
+    const start = offset;
+    offset += item.count / distribution.total * 100;
+    return `${item.color} ${start.toFixed(4)}% ${offset.toFixed(4)}%`;
+  }).join(", ");
+}
+
+function distributionChartHTML(title, distribution, kind) {
+  const sectionStart = `<section class="distribution-chart" data-distribution="${kind}" data-total="${distribution.total}">`;
+  if (!distribution.total) {
+    return `${sectionStart}
+      <h4>${title}</h4>
+      <div class="distribution-chart-empty">${esc(distribution.emptyLabel)}</div>
     </section>`;
   }
-  const visible = sorted.slice(0, 4).map((item, index) => ({
-    label: item[nameKey] || (nameKey === "template_name" ? "未分组" : "未记录"),
-    count: Number(item.machine_count),
-    color: colors[index],
-  }));
-  const rest = sorted.slice(4);
-  if (rest.length) {
-    visible.push({
-      label: `其他 ${rest.length} 类`,
-      count: rest.reduce((sum, item) => sum + Number(item.machine_count), 0),
-      color: colors[4],
-      rest: true,
-    });
+  if (distribution.categories.length === 1) {
+    const item = distribution.categories[0];
+    return `${sectionStart}
+      <h4>${title}</h4>
+      <div class="distribution-single" style="--segment-color:${item.color}">
+        <span><i></i><b>${esc(item.label)}</b></span>
+        <strong>${fmt(item.count, 0)}<small>台</small></strong>
+        <em>占本箱 ${fmt(item.count / distribution.total * 100)}%</em>
+      </div>
+    </section>`;
   }
-  return `<section class="distribution-block" data-distribution="${nameKey}" data-total="${total}">
-    <div class="distribution-head">
-      <span>${title}</span>
-      <b>${sorted.length} 类 · ${total} 台</b>
+  return `${sectionStart}
+    <h4>${title}</h4>
+    <div class="distribution-donut-wrap">
+      <div class="distribution-donut"
+        style="--distribution-segments:conic-gradient(${donutGradient(distribution)})"
+        role="img"
+        aria-label="${title}，${distribution.categories.length} 类，共 ${distribution.total} 台矿机">
+        <div class="distribution-donut-center">
+          <strong>${fmt(distribution.total, 0)}</strong>
+          <span>台矿机</span>
+        </div>
+      </div>
     </div>
-    <div class="distribution-track" aria-label="${title}矿机数量分布">
-      ${visible.map(item => `<i class="distribution-segment"
-        style="--segment-color:${item.color};--segment-weight:${item.count}"
-        data-count="${item.count}"
-        title="${esc(item.label)}：${item.count} 台（${fmt(item.count / total * 100, 1)}%）"></i>`).join("")}
-    </div>
-    <div class="distribution-legend">
-      ${visible.map(item => `<span class="distribution-key" title="${esc(item.label)}：${item.count} 台">
+    <div class="distribution-chart-legend">
+      ${distribution.categories.map(item => `<div title="${esc(item.label)}：${fmt(item.count, 0)} 台，${fmt(item.count / distribution.total * 100)}%">
         <i style="--segment-color:${item.color}"></i>
-        <strong>${esc(item.label)}</strong>
-        <em>${item.count}</em>
-      </span>`).join("")}
+        <span>${esc(item.label)}</span>
+        <strong>${fmt(item.count, 0)}</strong>
+        <em>${fmt(item.count / distribution.total * 100)}%</em>
+      </div>`).join("")}
     </div>
   </section>`;
+}
+
+function distributionTriggerHTML(row) {
+  const templates = groupDistribution(
+    row.templates, "template_name", "当前小时未记录算力组",
+  );
+  const workModes = groupDistribution(
+    row.work_modes, "work_mode", "当前小时未记录档位",
+  );
+  const hasDistribution = templates.total > 0 || workModes.total > 0;
+  return `<div class="distribution-trigger">
+    <div class="distribution-trigger-copy">
+      <span>箱内配置分布</span>
+      <strong>${templates.categories.length} 个算力组 · ${workModes.categories.length} 个档位 · ${fmt(row.machine_count, 0)} 台矿机</strong>
+    </div>
+    <button type="button" data-distribution-id="${esc(row.warehouse_id)}"${hasDistribution ? "" : " disabled"} title="${hasDistribution ? "查看算力组和档位分布" : "当前小时没有分布数据"}">
+      <i data-lucide="chart-pie"></i>${hasDistribution ? "查看分布" : "暂无分布"}
+    </button>
+  </div>`;
+}
+
+function openDistribution(id) {
+  const warehouse = warehouses.find(item =>
+    item.data_center_id === currentSite()?.data_center_id
+    && item.warehouse_id === id
+  );
+  const row = currentRows.find(item => item.warehouse_id === id);
+  if (!warehouse || !row || row.missing) return;
+  const templates = groupDistribution(
+    row.templates, "template_name", "当前小时未记录算力组",
+  );
+  const workModes = groupDistribution(
+    row.work_modes, "work_mode", "当前小时未记录档位",
+  );
+  distributionWarehouseId = id;
+  $("distribution-title").textContent = `${warehouse.warehouse_name} · 箱内配置分布`;
+  $("distribution-meta").textContent =
+    `${warehouse.data_center_name} · ${hourLabel(row.hour)} · 当前小时汇总`;
+  $("distribution-summary").innerHTML = `
+    <div><span>矿机总数</span><strong>${fmt(row.machine_count, 0)}</strong></div>
+    <div><span>算力组</span><strong>${templates.categories.length}</strong></div>
+    <div><span>档位</span><strong>${workModes.categories.length}</strong></div>`;
+  $("distribution-charts").innerHTML =
+    distributionChartHTML("算力组分布", templates, "template_name")
+    + distributionChartHTML("档位分布", workModes, "work_mode");
+  $("distribution-detail").disabled = !detailAvailable();
+  $("distribution-detail").title = detailAvailable()
+    ? "打开该矿箱的算力组、型号、档位和单机明细"
+    : "历史日期只保留矿箱汇总";
+  $("distribution").showModal();
+  iconize();
 }
 
 function detailAvailable() {
@@ -525,10 +603,7 @@ function cardHTML(row) {
         <strong>${row.machine_count}<small>台</small></strong>
       </div>
     </div>
-    <div class="card-distributions">
-      ${distributionHTML("算力组分布", row.templates, "template_name", "当前小时未记录算力组")}
-      ${distributionHTML("档位分布", row.work_modes, "work_mode", "当前小时未记录档位")}
-    </div>
+    ${distributionTriggerHTML(row)}
     ${peakHTML(row)}
     ${boxComplete ? "" : `<div class="card-alert"><span class="warehouse-hour-coverage warn">当日覆盖 ${esc(coverageLabel(observedHours))}</span></div>`}
   </article>`;
@@ -1279,8 +1354,12 @@ function renderDetail() {
   }).join("")}</tbody></table>${rows.length ? "" : "<p>没有符合条件的明细。</p>"}`;
 }
 
-$("hour").onchange = render;
+$("hour").onchange = () => {
+  if ($("distribution").open) $("distribution").close();
+  render();
+};
 $("date").onchange = async () => {
+  if ($("distribution").open) $("distribution").close();
   if ($("detail").open) {
     $("detail").close();
     requestVersion++;
@@ -1289,6 +1368,7 @@ $("date").onchange = async () => {
   await selectDate($("date").value);
 };
 $("site").onchange = async () => {
+  if ($("distribution").open) $("distribution").close();
   if ($("detail").open) {
     $("detail").close();
     requestVersion++;
@@ -1311,6 +1391,11 @@ document.querySelectorAll("[data-load-filter]").forEach(button => {
   };
 });
 $("cards").onclick = event => {
+  const distributionButton = event.target.closest("[data-distribution-id]");
+  if (distributionButton) {
+    openDistribution(distributionButton.dataset.distributionId);
+    return;
+  }
   const peakHourButton = event.target.closest("[data-peak-hour-id]");
   if (peakHourButton) {
     revealPeakHour(peakHourButton.dataset.peakHourId);
@@ -1326,6 +1411,19 @@ $("cards").onclick = event => {
 };
 $("close").onclick = () => { $("detail").close(); requestVersion++; };
 $("detail").addEventListener("cancel", () => requestVersion++);
+$("distribution-close").onclick = () => $("distribution").close();
+$("distribution").addEventListener("click", event => {
+  if (event.target === $("distribution")) $("distribution").close();
+});
+$("distribution").addEventListener("close", () => {
+  distributionWarehouseId = null;
+});
+$("distribution-detail").onclick = () => {
+  const id = distributionWarehouseId;
+  if (!id || !detailAvailable()) return;
+  $("distribution").close();
+  openDetail(id);
+};
 document.querySelectorAll("[data-level]").forEach(button => {
   button.onclick = () => { level = button.dataset.level; renderDetail(); };
 });

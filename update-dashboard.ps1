@@ -57,8 +57,15 @@ else {
 if ($LASTEXITCODE -ne 0) {
     $larkSnapshot = "dashboard\data\lark_power.json"
     if (Test-Path -LiteralPath $larkSnapshot) {
-        Write-Host "Lark sync failed; continuing with the existing snapshot." `
-            -ForegroundColor Yellow
+        $existingSnapshot = Get-Content -LiteralPath $larkSnapshot -Raw |
+            ConvertFrom-Json
+        if ($existingSnapshot.snapshot_date -eq $snapshotDate) {
+            Write-Host "Lark sync failed; reusing the existing $snapshotDate snapshot." `
+                -ForegroundColor Yellow
+        }
+        else {
+            throw "Lark sync failed and no $snapshotDate snapshot is available. Dashboard was not published."
+        }
     }
     else {
         throw "Lark sync failed and no local snapshot is available."

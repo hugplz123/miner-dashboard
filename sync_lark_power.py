@@ -2,9 +2,11 @@
 import argparse
 import datetime as dt
 import json
+import random
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 
@@ -70,17 +72,29 @@ def find_lark_command(explicit=None):
     )
 
 
-def fetch_records(command, profile, base_token, table_id, view_id):
-    endpoint = (
-        f"/open-apis/bitable/v1/apps/{base_token}"
-        f"/tables/{table_id}/records"
+def retryable_lark_error(payload, detail):
+    error = payload.get("error") or {}
+    code = error.get("code")
+    subtype = str(error.get("subtype") or "").lower()
+    message = str(error.get("message") or detail).lower()
+    return (
+        code == 429
+        or subtype == "rate_limit"
+        or bool(error.get("retryable"))
+        or "rate limited" in message
+        or "http 429" in message
     )
-    records = []
-    page_token = None
-    while True:
-        params = {"page_size": 100, "view_id": view_id}
-        if page_token:
-            params["page_token"] = page_token
+
+
+def request_page(
+    command,
+    profile,
+    endpoint,
+    params,
+    retries,
+    retry_base_delay,
+):
+    for attempt in range(retries + 1):
         process = subprocess.run(
             [
                 *command,
@@ -96,19 +110,66 @@ def fetch_records(command, profile, base_token, table_id, view_id):
             errors="replace",
             check=False,
         )
-        if process.returncode != 0:
-            detail = (process.stderr or process.stdout or "").strip()
-            raise RuntimeError(
-                f"Lark API request failed with exit code "
-                f"{process.returncode}: {detail}"
-            )
+        detail = (process.stderr or process.stdout or "").strip()
         try:
             payload = json.loads(process.stdout)
         except json.JSONDecodeError as exc:
+            if attempt < retries and process.returncode == 0:
+                delay = retry_base_delay * (2 ** attempt)
+                delay *= 1 + random.uniform(0, 0.2)
+                time.sleep(delay)
+                continue
             raise RuntimeError("Lark CLI did not return valid JSON") from exc
-        if not payload.get("ok"):
-            error = payload.get("error") or payload
-            raise RuntimeError(f"Lark API rejected the request: {error}")
+
+        if process.returncode == 0 and payload.get("ok"):
+            return payload
+
+        if attempt < retries and retryable_lark_error(payload, detail):
+            delay = min(60, retry_base_delay * (2 ** attempt))
+            delay *= 1 + random.uniform(0, 0.2)
+            print(
+                "Lark rate limit reached; retrying in "
+                f"{delay:.1f}s ({attempt + 1}/{retries})",
+                flush=True,
+            )
+            time.sleep(delay)
+            continue
+
+        error = payload.get("error") or payload
+        raise RuntimeError(
+            f"Lark API request failed with exit code "
+            f"{process.returncode}: {error}"
+        )
+    raise RuntimeError("Lark API request exhausted its retry budget")
+
+
+def fetch_records(
+    command,
+    profile,
+    base_token,
+    table_id,
+    view_id,
+    retries,
+    retry_base_delay,
+):
+    endpoint = (
+        f"/open-apis/bitable/v1/apps/{base_token}"
+        f"/tables/{table_id}/records"
+    )
+    records = []
+    page_token = None
+    while True:
+        params = {"page_size": 100, "view_id": view_id}
+        if page_token:
+            params["page_token"] = page_token
+        payload = request_page(
+            command,
+            profile,
+            endpoint,
+            params,
+            retries,
+            retry_base_delay,
+        )
 
         data = payload.get("data") or {}
         page_items = data.get("items") or []
@@ -178,6 +239,8 @@ def sync(args):
         args.base_token,
         args.table_id,
         args.view_id,
+        args.retries,
+        args.retry_base_delay,
     )
     records = [public_record(item) for item in items]
     keys = set()
@@ -238,6 +301,18 @@ def main():
     parser.add_argument(
         "--lark-cli",
         help="Optional path to lark-cli.cmd or the Node CLI entry point",
+    )
+    parser.add_argument(
+        "--retries",
+        type=int,
+        default=6,
+        help="Retries for transient Lark API errors; defaults to 6",
+    )
+    parser.add_argument(
+        "--retry-base-delay",
+        type=float,
+        default=2.0,
+        help="Initial retry delay in seconds; defaults to 2",
     )
     sync(parser.parse_args())
 
