@@ -62,6 +62,81 @@ function expectedOverallRatio(rows) {
     : null;
 }
 
+function expectedHourlySummaries(rows) {
+  const rowsByHour = new Map();
+  for (const row of rows) {
+    if (!rowsByHour.has(row.hour)) rowsByHour.set(row.hour, []);
+    rowsByHour.get(row.hour).push(row);
+  }
+  return [...rowsByHour.entries()]
+    .sort(([left], [right]) => left - right)
+    .map(([hour, hourRows]) => {
+      const validPower = sum(hourRows, "power_ratio_valid_power_sum_w");
+      const validHashrate = sum(
+        hourRows, "power_ratio_valid_hashrate_sum_ths",
+      );
+      return {
+        hour,
+        warehouse_count: new Set(
+          hourRows.map(row => row.warehouse_id),
+        ).size,
+        machine_count: Math.trunc(sum(hourRows, "machine_count")),
+        power_ratio_sample_count: Math.trunc(
+          sum(hourRows, "power_ratio_sample_count"),
+        ),
+        actual_power_kw: sum(hourRows, "actual_power_kw"),
+        power_ratio_valid_power_sum_w: validPower,
+        power_ratio_valid_hashrate_sum_ths: validHashrate,
+        power_ratio_overall_w_per_th: validHashrate > 0
+          ? validPower / validHashrate
+          : null,
+      };
+    });
+}
+
+function expectedWarehouseDailyPeaks(rows) {
+  const rowsByWarehouse = new Map();
+  for (const row of rows) {
+    if (row.actual_power_kw == null) continue;
+    if (!rowsByWarehouse.has(row.warehouse_id)) {
+      rowsByWarehouse.set(row.warehouse_id, []);
+    }
+    rowsByWarehouse.get(row.warehouse_id).push(row);
+  }
+  return [...rowsByWarehouse.values()]
+    .map(warehouseRows => warehouseRows.reduce((peak, row) =>
+      !peak || row.actual_power_kw > peak.actual_power_kw ? row : peak,
+    null))
+    .sort((left, right) =>
+      left.warehouse_name < right.warehouse_name ? -1
+        : left.warehouse_name > right.warehouse_name ? 1 : 0
+    );
+}
+
+function assertHourlySummaries(actual, expected) {
+  assert.equal(actual.length, expected.length);
+  for (let index = 0; index < expected.length; index += 1) {
+    const actualRow = actual[index];
+    const expectedRow = expected[index];
+    assert.equal(actualRow.hour, expectedRow.hour);
+    assert.equal(actualRow.warehouse_count, expectedRow.warehouse_count);
+    assert.equal(actualRow.machine_count, expectedRow.machine_count);
+    assert.equal(
+      actualRow.power_ratio_sample_count,
+      expectedRow.power_ratio_sample_count,
+    );
+    for (const key of [
+      "actual_power_kw",
+      "power_ratio_valid_power_sum_w",
+      "power_ratio_valid_hashrate_sum_ths",
+      "power_ratio_overall_w_per_th",
+    ]) {
+      assert(close(actualRow[key], expectedRow[key]),
+        `${key} mismatch for hour ${expectedRow.hour}`);
+    }
+  }
+}
+
 function normalizeWarehouseNumber(value) {
   return Number(String(value).trim().replace(/^C/i, ""));
 }
@@ -212,6 +287,7 @@ function verifyPublishedData() {
   );
 
   const rowsByDate = new Map();
+  const expectedHourFiles = new Set();
   let allRows = 0;
   for (const date of catalog.available_dates) {
     const file = path.join(DATA, "days", `${date.replaceAll("-", "")}.json.gz`);
@@ -259,8 +335,46 @@ function verifyPublishedData() {
           row => row.data_center_id === site.data_center_id,
         ),
       );
+
+      const siteHours = [...new Set(
+        siteDay.warehouse_rows.map(row => row.hour),
+      )].sort((left, right) => left - right);
+      const expectedSummaries = expectedHourlySummaries(
+        siteDay.warehouse_rows,
+      );
+      const expectedPeaks = expectedWarehouseDailyPeaks(
+        siteDay.warehouse_rows,
+      );
+      for (const hour of siteHours) {
+        const hourName = `${site.data_center_id}-${date.replaceAll("-", "")}-` +
+          `${String(hour).slice(-2)}.json.gz`;
+        const hourFile = path.join(DATA, "hours", hourName);
+        expectedHourFiles.add(hourName);
+        assert(fs.existsSync(hourFile), `missing hour file: ${hourFile}`);
+        const hourData = readGzipJson(hourFile);
+        assert.equal(hourData.schema_version, "3.3");
+        assert.equal(hourData.date, date);
+        assert.equal(hourData.hour, hour);
+        assert.deepEqual(
+          hourData.warehouse_rows,
+          siteDay.warehouse_rows
+            .filter(row => row.hour === hour)
+            .sort((left, right) =>
+              left.warehouse_name < right.warehouse_name ? -1
+                : left.warehouse_name > right.warehouse_name ? 1 : 0
+            ),
+        );
+        assert.deepEqual(hourData.warehouse_peaks, expectedPeaks);
+        assertHourlySummaries(hourData.hourly_summary, expectedSummaries);
+      }
     }
   }
+  assert.deepEqual(
+    fs.readdirSync(path.join(DATA, "hours"))
+      .filter(name => name.endsWith(".json.gz"))
+      .sort(),
+    [...expectedHourFiles].sort(),
+  );
 
   const nimrod02Warehouses = catalog.warehouses.filter(warehouse =>
     warehouse.data_center_name === "Nimrod02"
@@ -406,7 +520,13 @@ function verifyPublishedData() {
     }
   }
 
-  return { catalog, lark, catalogRows: allRows, machineHours };
+  return {
+    catalog,
+    lark,
+    catalogRows: allRows,
+    machineHours,
+    hourBundles: expectedHourFiles.size,
+  };
 }
 
 async function verifyBrowser(catalog) {
@@ -441,6 +561,8 @@ async function verifyBrowser(catalog) {
       timeout: 60000,
     });
     await page.waitForSelector(".warehouse-card", { timeout: 60000 });
+    assert(requests.some(url => /\/data\/hours\/[^?]+\.json\.gz/.test(url)));
+    assert(!requests.some(url => /\/data\/days\//.test(url)));
 
     const whiteoak = catalog.sites.find(site =>
       site.data_center_name === "WhiteOak01"
@@ -971,32 +1093,25 @@ async function verifyBrowser(catalog) {
     ) || catalog.sites[0];
     const raceDate = catalog.available_dates.at(-2);
     const latestDayFile = catalog.latest_date.replaceAll("-", "");
-    const raceDayFile = raceDate.replaceAll("-", "");
-    await racePage.route("**/data/days/*.json*", async route => {
+    await racePage.route("**/data/hours/*.json*", async route => {
       const url = route.request().url();
-      const isLatest = url.includes(`-${latestDayFile}.json`);
-      const isRaceDay = url.includes(`-${raceDayFile}.json`);
-      if (!isLatest && !isRaceDay) {
-        await route.continue();
-        return;
-      }
+      const isLatest = url.includes(`-${latestDayFile}-`);
       if (isLatest) await new Promise(resolve => setTimeout(resolve, 2500));
-      const routeCenter = isLatest ? whiteoak.data_center_id : raceSite.data_center_id;
-      await route.fulfill({
-        path: path.join(
-          DATA, "days",
-          `${routeCenter}-${isLatest ? latestDayFile : raceDayFile}.json.gz`,
-        ),
-        contentType: "application/gzip",
-      });
+      await route.continue();
     });
     await racePage.goto(DASHBOARD_URL, { waitUntil: "domcontentloaded" });
     await racePage.waitForFunction(() =>
       document.querySelectorAll("#date option").length === 7);
     await racePage.waitForSelector("#loading:not([hidden])");
+    const raceHours = raceSite.hours_by_date[raceDate];
+    assert(raceHours?.length, `no hourly data for ${raceSite.data_center_name}/${raceDate}`);
+    const raceHour = raceHours.at(-1);
     await racePage.selectOption("#site", raceSite.data_center_id);
     await racePage.selectOption("#date", raceDate);
-    await racePage.selectOption("#hour", `${raceDate.replaceAll("-", "")}10`);
+    await racePage.waitForFunction(hour =>
+      document.querySelector(`#hour option[value="${hour}"]`) != null,
+    String(raceHour));
+    await racePage.selectOption("#hour", String(raceHour));
     await racePage.waitForFunction(date =>
       document.querySelector("#meta")?.textContent.includes(`当前 ${date}`),
       raceDate);
@@ -1006,8 +1121,11 @@ async function verifyBrowser(catalog) {
     )
       .textContent();
     assert(!racePower.trim().startsWith("0"),
-      "a late day response overwrote the newly selected day");
+      "a late hour response overwrote the newly selected hour");
     assert.equal(await racePage.locator("#date").inputValue(), raceDate);
+    assert.equal(
+      await racePage.locator("#hour").inputValue(), String(raceHour),
+    );
     assert(await racePage.locator("#loading").isHidden());
     await racePage.close();
 
@@ -1065,17 +1183,19 @@ async function verifyBrowser(catalog) {
 }
 
 (async () => {
-  const { catalog, lark, catalogRows, machineHours } = verifyPublishedData();
+  const {
+    catalog, lark, catalogRows, machineHours, hourBundles,
+  } = verifyPublishedData();
   if (!DATA_ONLY) {
     await verifyBrowser(catalog);
   }
   console.log(
     `PASS: ${catalog.sites.length} sites, ${catalog.available_dates.length} days, ` +
     `${catalogRows} warehouse hours, ${machineHours} latest-day machine hours, ` +
-    `${lark.record_count} Lark power records; ` +
+    `${hourBundles} hourly bundles, ${lark.record_count} Lark power records; ` +
     (DATA_ONLY
-      ? "data and lazy gzip details"
-      : "data, lazy gzip details, Lark matching, distribution dialogs, peak drill-down, charts, site/date switching and mobile layout"),
+      ? "data, hourly bundles and lazy gzip details"
+      : "data, hourly bundles, lazy gzip details, Lark matching, distribution dialogs, peak drill-down, charts, site/date/hour switching and mobile layout"),
   );
 })().catch(error => {
   console.error(error);

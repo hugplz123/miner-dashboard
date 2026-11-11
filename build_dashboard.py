@@ -332,6 +332,55 @@ def daily_totals(site_id, site_name, date, rows, warehouse_count):
     }
 
 
+def hourly_summaries(rows):
+    """Build the small per-hour series used by the dashboard trend chart."""
+    rows_by_hour = defaultdict(list)
+    for row in rows:
+        rows_by_hour[int(row["hour"])].append(row)
+    summaries = []
+    for hour, hour_rows in sorted(rows_by_hour.items()):
+        valid_power = numeric_sum(
+            hour_rows, "power_ratio_valid_power_sum_w"
+        )
+        valid_hashrate = numeric_sum(
+            hour_rows, "power_ratio_valid_hashrate_sum_ths"
+        )
+        summaries.append({
+            "hour": hour,
+            "warehouse_count": len({
+                row["warehouse_id"] for row in hour_rows
+            }),
+            "machine_count": int(numeric_sum(hour_rows, "machine_count")),
+            "power_ratio_sample_count": int(
+                numeric_sum(hour_rows, "power_ratio_sample_count")
+            ),
+            "actual_power_kw": numeric_sum(
+                hour_rows, "actual_power_kw"
+            ),
+            "power_ratio_valid_power_sum_w": valid_power,
+            "power_ratio_valid_hashrate_sum_ths": valid_hashrate,
+            "power_ratio_overall_w_per_th": (
+                valid_power / valid_hashrate if valid_hashrate > 0 else None
+            ),
+        })
+    return summaries
+
+
+def warehouse_daily_peaks(rows):
+    """Return each warehouse's highest actual-power row for the day."""
+    rows_by_warehouse = defaultdict(list)
+    for row in rows:
+        if row.get("actual_power_kw") is not None:
+            rows_by_warehouse[row["warehouse_id"]].append(row)
+    return sorted(
+        (
+            max(values, key=lambda row: row["actual_power_kw"])
+            for values in rows_by_warehouse.values()
+        ),
+        key=lambda row: row["warehouse_name"],
+    )
+
+
 def write_gzip_json(path, payload):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
@@ -451,18 +500,21 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
 
     data_dir = destination / "data"
     days_dir = data_dir / "days"
+    hours_dir = data_dir / "hours"
     details_dir = data_dir / "details"
     days_dir.mkdir(parents=True, exist_ok=True)
+    hours_dir.mkdir(parents=True, exist_ok=True)
     details_dir.mkdir(parents=True, exist_ok=True)
     remove_children(
         data_dir,
         {
-            "catalog.json", "days", "details", "lark_power.json",
+            "catalog.json", "days", "hours", "details", "lark_power.json",
             "lark_power_history",
         },
     )
 
     day_files = set()
+    hour_files = set()
     for date, rows in rows_by_date.items():
         date_payload = {
             "schema_version": "3.0",
@@ -498,6 +550,29 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
             site_name = f"{center_id}-{date}.json.gz"
             day_files.add(site_name)
             write_gzip_json(days_dir / site_name, site_payload)
+
+            rows_by_hour = defaultdict(list)
+            for row in site_rows:
+                rows_by_hour[int(row["hour"])].append(row)
+            peaks = warehouse_daily_peaks(site_rows)
+            summaries = hourly_summaries(site_rows)
+            compact_date = iso_date(date).replace("-", "")
+            for hour, hour_rows in sorted(rows_by_hour.items()):
+                hour_payload = {
+                    "schema_version": "3.3",
+                    "date": iso_date(date),
+                    "hour": hour,
+                    "warehouse_rows": sorted(
+                        hour_rows, key=lambda row: row["warehouse_name"]
+                    ),
+                    "warehouse_peaks": peaks,
+                    "hourly_summary": summaries,
+                }
+                hour_name = (
+                    f"{center_id}-{compact_date}-{hour % 100:02d}.json.gz"
+                )
+                hour_files.add(hour_name)
+                write_gzip_json(hours_dir / hour_name, hour_payload)
 
     bundles = defaultdict(lambda: {"hours": {}})
     for (center_id, hour, warehouse_id), payload in details.items():
@@ -614,6 +689,7 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
     atomic_replace(temporary, data_dir / "catalog.json")
 
     remove_children(days_dir, day_files)
+    remove_children(hours_dir, hour_files)
     expected_detail_dirs = {path.split("/", 1)[0] for path in detail_paths}
     remove_children(details_dir, expected_detail_dirs)
     if details_dir.exists():

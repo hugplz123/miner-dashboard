@@ -21,7 +21,7 @@ let selectedDate, dayData, detailData, detailBundle, level = "template_rows";
 let requestVersion = 0, dayRequestVersion = 0, trendMode = "daily";
 let trendMetric = "ratio", trendState = null, loadFilter = "all";
 let distributionWarehouseId = null;
-const dayCache = new Map();
+const hourCache = new Map();
 const detailCache = new Map();
 
 function iconize() {
@@ -116,15 +116,10 @@ function syncTimeLabel(value) {
 
 function dailyPeak(warehouseId) {
   if (!dayData) return null;
-  const rows = dayData.warehouse_rows.filter(row =>
+  return (dayData.warehouse_peaks || []).find(row =>
     row.data_center_id === currentSite()?.data_center_id
     && row.warehouse_id === warehouseId
-    && finite(row.actual_power_kw)
-  );
-  if (!rows.length) return null;
-  return rows.reduce((peak, row) =>
-    !peak || row.actual_power_kw > peak.actual_power_kw ? row : peak,
-  null);
+  ) || null;
 }
 
 function dailyMachinePeak(payload) {
@@ -285,38 +280,16 @@ function populateHours() {
   if (hours.length) $("hour").value = hours[hours.length - 1];
 }
 
-function loadDay(siteId, date) {
-  const cacheKey = `${siteId}/${date}`;
-  if (dayCache.has(cacheKey)) return dayCache.get(cacheKey);
+function loadHour(siteId, date, hour) {
+  const cacheKey = `${siteId}/${date}/${hour}`;
+  if (hourCache.has(cacheKey)) return hourCache.get(cacheKey);
   const version = encodeURIComponent(catalog.exported_at || catalog.latest_date);
   const promise = fetchGzipJson(
-    `data/days/${siteId}-${compactDate(date)}.json.gz?v=${version}`
+    `data/hours/${siteId}-${compactDate(date)}-${String(hour).slice(-2)}.json.gz?v=${version}`
   );
-  dayCache.set(cacheKey, promise);
-  promise.catch(() => dayCache.delete(cacheKey));
+  hourCache.set(cacheKey, promise);
+  promise.catch(() => hourCache.delete(cacheKey));
   return promise;
-}
-
-let prefetchSiteId = null;
-
-function primeDayCache(siteId) {
-  const site = sites.find(item => item.data_center_id === siteId);
-  const queue = [...(site?.available_dates || [])]
-    .filter(date => !dayCache.has(`${siteId}/${date}`));
-  if (!queue.length) return;
-  prefetchSiteId = siteId;
-  const schedule = window.requestIdleCallback || (callback =>
-    setTimeout(callback, 250));
-
-  const primeNext = () => {
-    if (!queue.length || prefetchSiteId !== siteId) return;
-    schedule(() => {
-      if (prefetchSiteId !== siteId) return;
-      const date = queue.shift();
-      loadDay(siteId, date).catch(() => {}).finally(primeNext);
-    }, { timeout: 1500 });
-  };
-  primeNext();
 }
 
 function setLoading(active, text = "") {
@@ -804,22 +777,23 @@ function hourlySeries() {
   const lark = larkPowerSnapshot(site, selectedDate);
   const theoryPower = siteTheoreticalPower();
   const recordedHours = new Set(hours.map(Number));
+  const summaries = new Map(
+    (dayData.hourly_summary || []).map(item => [Number(item.hour), item]),
+  );
   return Array.from({ length: expectedHoursPerDay }, (_, index) => {
     const hour = Number(`${compactDate(selectedDate)}${String(index).padStart(2, "0")}`);
-    const rows = dayData.warehouse_rows.filter(row =>
-      row.data_center_id === site.data_center_id && row.hour === hour
-    );
+    const summary = summaries.get(hour);
     const hasData = recordedHours.has(hour);
     return {
       key: String(hour),
       label: `${String(hour).slice(-2)}:00`,
-      ratio: ratio(rows),
-      actualPower: hasData ? sum(rows, "actual_power_kw") : null,
+      ratio: summary?.power_ratio_overall_w_per_th ?? null,
+      actualPower: hasData ? summary?.actual_power_kw ?? null : null,
       theoreticalPower: hasData ? theoryPower : null,
       mountedPower: lark.available ? lark.mountedPower : null,
       detail: {
-        machine_count: sum(rows, "machine_count"),
-        power_ratio_sample_count: sum(rows, "power_ratio_sample_count"),
+        machine_count: summary?.machine_count ?? null,
+        power_ratio_sample_count: summary?.power_ratio_sample_count ?? null,
       },
       missing: !hasData,
     };
@@ -1134,14 +1108,14 @@ async function selectDate(date, preferredHour) {
   }
   const daily = dailyFor(date);
   $("meta").textContent = `${catalog.date_range.start} 至 ${catalog.date_range.end} · 正在读取 ${date} · ${siteCoverageLabel(daily)} · ${currentSite().warehouses_with_data} 个矿箱`;
-  setLoading(true, `正在加载 ${date} 的数据，请稍候…`);
+  const hour = Number($("hour").value);
+  setLoading(true, `正在加载 ${hourLabel(hour)} 的数据，请稍候…`);
   try {
-    const payload = await loadDay(siteId, date);
+    const payload = await loadHour(siteId, date, hour);
     if (token !== dayRequestVersion) return;
     dayData = payload;
     setLoading(false);
     render();
-    primeDayCache(siteId);
   } catch (error) {
     if (token !== dayRequestVersion) return;
     if (previousDate) {
@@ -1159,6 +1133,27 @@ async function selectDate(date, preferredHour) {
   }
 }
 
+async function selectHour(hour) {
+  const token = ++dayRequestVersion;
+  const siteId = currentSite()?.data_center_id;
+  const previousHour = Number($("hour").value);
+  $("hour").value = hour;
+  setLoading(true, `正在加载 ${hourLabel(hour)} 的数据，请稍候…`);
+  try {
+    const payload = await loadHour(siteId, selectedDate, hour);
+    if (token !== dayRequestVersion) return;
+    dayData = payload;
+    setLoading(false);
+    render();
+  } catch (error) {
+    if (token !== dayRequestVersion) return;
+    $("hour").value = previousHour;
+    setLoading(false);
+    $("notice").textContent = "该小时数据加载超时或暂时无法读取，请检查网络后重试。";
+    console.error(error);
+  }
+}
+
 function bindChart() {
   const svg = $("trend");
   svg.addEventListener("pointermove", showTooltip);
@@ -1170,8 +1165,7 @@ function bindChart() {
     if (trendMode === "daily") {
       await selectDate(target.dataset.chartKey, Number($("hour").value));
     } else {
-      $("hour").value = target.dataset.chartKey;
-      render();
+      await selectHour(Number(target.dataset.chartKey));
     }
   });
   svg.addEventListener("keydown", async event => {
@@ -1182,8 +1176,7 @@ function bindChart() {
     if (trendMode === "daily") {
       await selectDate(target.dataset.chartKey, Number($("hour").value));
     } else {
-      $("hour").value = target.dataset.chartKey;
-      render();
+      await selectHour(Number(target.dataset.chartKey));
     }
   });
 }
@@ -1298,10 +1291,13 @@ async function openDetail(id, options = {}) {
     if (options.dailyMachinePeak) {
       const dayPeak = dailyMachinePeak(payload);
       if (!dayPeak) throw Error("当日没有可用的矿机功率数据");
-      const peakRow = dayData?.warehouse_rows.find(item =>
+      const peakHourData = dayData?.hour === dayPeak.hour
+        ? dayData
+        : await loadHour(row.data_center_id, selectedDate, dayPeak.hour);
+      if (token !== requestVersion) return;
+      const peakRow = peakHourData?.warehouse_rows.find(item =>
         item.data_center_id === row.data_center_id
         && item.warehouse_id === row.warehouse_id
-        && item.hour === dayPeak.hour
       );
       if (peakRow) {
         row = {
@@ -1401,9 +1397,9 @@ function renderDetail() {
   }).join("")}</tbody></table>${rows.length ? "" : "<p>没有符合条件的明细。</p>"}`;
 }
 
-$("hour").onchange = () => {
+$("hour").onchange = async () => {
   if ($("distribution").open) $("distribution").close();
-  render();
+  await selectHour(Number($("hour").value));
 };
 $("date").onchange = async () => {
   if ($("distribution").open) $("distribution").close();
