@@ -21,6 +21,7 @@ DETAIL_LEVELS = ("template_rows", "model_rows", "work_mode_rows", "machine_rows"
 PRIVATE_FIELDS = {"mac", "source_id", "worker_location"}
 EXPECTED_HOURS_PER_DAY = 24
 WAREHOUSE_NUMBER = re.compile(r"^C?0*(\d+)$", re.IGNORECASE)
+WAREHOUSE_COUNT_OVERRIDES = {"nimrod02": 16}
 
 
 def atomic_replace(source, target, attempts=10):
@@ -99,6 +100,16 @@ def normalize_warehouse_number(value):
     if not match:
         raise ValueError(f"Unsupported warehouse number: {value!r}")
     return int(match.group(1))
+
+
+def warehouse_allowed(site_name, warehouse_name):
+    max_count = WAREHOUSE_COUNT_OVERRIDES.get(
+        str(site_name or "").strip().casefold()
+    )
+    return (
+        max_count is None
+        or normalize_warehouse_number(warehouse_name) <= max_count
+    )
 
 
 def load_lark_power(path, expected_date=None):
@@ -385,14 +396,22 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
         center_id = slim["data_center_id"]
         center_name = slim["data_center_name"]
         site_names[center_id] = center_name
-        for row in summary_warehouses(slim):
+        slim_warehouses = summary_warehouses(slim)
+        allowed_warehouse_ids = set()
+        for row in slim_warehouses:
+            if not warehouse_allowed(center_name, row["warehouse_name"]):
+                continue
+            allowed_warehouse_ids.add(row["warehouse_id"])
             warehouses[(center_id, row["warehouse_id"])] = {
                 "data_center_id": center_id,
                 "data_center_name": center_name,
                 "warehouse_id": row["warehouse_id"],
                 "warehouse_name": row["warehouse_name"],
             }
-        rows_by_date[date].extend(slim.get("warehouse_rows", []))
+        rows_by_date[date].extend(
+            row for row in slim.get("warehouse_rows", [])
+            if row["warehouse_id"] in allowed_warehouse_ids
+        )
 
     for site_key, path in sorted(detail_sources.items()):
         full = load_json(path)
@@ -404,6 +423,8 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
         cache = load_json(cache_path) if cache_path.exists() else None
         if cache:
             for row in summary_warehouses({}, full, cache):
+                if not warehouse_allowed(full["data_center_name"], row["warehouse_name"]):
+                    continue
                 warehouses[(center_id, row["warehouse_id"])] = {
                     "data_center_id": center_id,
                     "data_center_name": full["data_center_name"],
@@ -460,6 +481,8 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
 
     bundles = defaultdict(lambda: {"hours": {}})
     for (center_id, hour, warehouse_id), payload in details.items():
+        if (center_id, warehouse_id) not in warehouses:
+            continue
         date = str(hour)[:8]
         bundle = bundles[(center_id, date, warehouse_id)]
         bundle.update({

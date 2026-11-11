@@ -164,7 +164,7 @@ function verifyPublishedData() {
     snapshots: larkCatalogSnapshots,
   });
 
-  assert.equal(catalog.warehouses.length, 98);
+  assert.equal(catalog.warehouses.length, 96);
   let matchedWarehouses = 0;
   for (const warehouse of catalog.warehouses) {
     const expectedLarkByDate = {};
@@ -208,7 +208,7 @@ function verifyPublishedData() {
   );
   assert.equal(
     nimrod02.lark_power_by_date[lark.snapshot_date].total_warehouses,
-    18,
+    16,
   );
 
   const rowsByDate = new Map();
@@ -245,7 +245,12 @@ function verifyPublishedData() {
   const nimrod02Warehouses = catalog.warehouses.filter(warehouse =>
     warehouse.data_center_name === "Nimrod02"
   );
-  assert.equal(nimrod02Warehouses.length, 18);
+  assert.equal(nimrod02Warehouses.length, 16);
+  assert.deepEqual(
+    nimrod02Warehouses.map(warehouse => warehouse.warehouse_name).sort(),
+    Array.from({ length: 16 }, (_, index) =>
+      `C${String(index + 1).padStart(2, "0")}`),
+  );
   const nimrod02LatestRows = rowsByDate.get(catalog.latest_date).filter(row =>
     row.data_center_id === nimrod02.data_center_id
   );
@@ -254,11 +259,9 @@ function verifyPublishedData() {
   );
   assert.equal(nimrod02LatestIds.size, 16);
   for (const warehouseName of ["C17", "C18"]) {
-    const warehouse = nimrod02Warehouses.find(item =>
+    assert.equal(nimrod02Warehouses.find(item =>
       item.warehouse_name === warehouseName
-    );
-    assert(warehouse);
-    assert(!nimrod02LatestIds.has(warehouse.warehouse_id));
+    ), undefined);
   }
 
   const expectedDailyKeys = new Set();
@@ -438,7 +441,9 @@ async function verifyBrowser(catalog) {
       "WhiteOak01");
     assert.equal(await page.locator("#date option").count(), 7);
     assert.equal(await page.locator(".warehouse-card").count(),
-      whiteoakActiveIds.size);
+      whiteoak.warehouse_count);
+    assert.equal(await page.locator(".warehouse-card.missing-card").count(),
+      whiteoak.warehouse_count - whiteoakActiveIds.size);
     assert.equal(await page.locator("#metrics .overview-stat").count(), 3);
     assert.equal(await page.locator("#metrics .overview-support-item").count(), 2);
     assert.equal(await page.locator(".load-filters button").count(), 3);
@@ -594,7 +599,7 @@ async function verifyBrowser(catalog) {
         .count());
     await page.locator("[data-load-filter='all']").click();
     assert.equal(await page.locator(".warehouse-card").count(),
-      whiteoakActiveIds.size);
+      whiteoak.warehouse_count);
     await page.locator("[data-trend-metric='power']").click();
     assert((await page.locator("#trend-title").textContent()).includes("功率趋势"));
     assert.equal(await page.locator("#trend .chart-line.actual").count(), 1);
@@ -628,7 +633,7 @@ async function verifyBrowser(catalog) {
       `运行 ${latestDaily.hours_with_data}/${latestDaily.expected_hours} 小时`
     ));
     assert((await page.locator("#date option:checked").textContent()).includes(
-      `完整 ${latestDaily.complete_warehouse_count}/${latestDaily.warehouses_with_data} 箱`
+      `完整 ${latestDaily.complete_warehouse_count}/${latestDaily.warehouse_count} 箱`
     ));
     assert.equal(await page.locator("#coverage").getAttribute("data-complete"),
       String(latestDaily.is_fully_complete));
@@ -636,9 +641,10 @@ async function verifyBrowser(catalog) {
       `场地 ${latestDaily.hours_with_data}/${latestDaily.expected_hours} 小时有数据`
     ));
     assert((await page.locator("#coverage").textContent()).includes(
-      `${latestDaily.complete_warehouse_count}/${latestDaily.warehouses_with_data} 个矿箱完整`
+      `${latestDaily.complete_warehouse_count}/${latestDaily.warehouse_count} 个矿箱完整`
     ));
-    const expectedCoverageWarnings = latestDaily.incomplete_warehouse_count;
+    const expectedCoverageWarnings = latestDaily.incomplete_warehouse_count
+      + latestDaily.warehouses_without_data;
     assert.equal(await page.locator(
       ".warehouse-hour-coverage.warn, .missing-coverage.warn"
     ).count(), expectedCoverageWarnings);
@@ -852,8 +858,38 @@ async function verifyBrowser(catalog) {
         .filter(row => row.data_center_id === nimrod.data_center_id)
         .map(row => row.warehouse_id),
     );
+    const nimrodWarehouses = catalog.warehouses.filter(warehouse =>
+      warehouse.data_center_name === "Nimrod01"
+    );
+    const nimrodMissingWarehouses = nimrodWarehouses.filter(warehouse =>
+      !nimrodActiveIds.has(warehouse.warehouse_id)
+    );
+    assert.equal(nimrodWarehouses.length, 18);
+    assert.deepEqual(
+      nimrodMissingWarehouses.map(warehouse => warehouse.warehouse_name).sort(),
+      ["C03", "C15"],
+    );
     assert.equal(await page.locator(".warehouse-card").count(),
-      nimrodActiveIds.size);
+      nimrod.warehouse_count);
+    assert.equal(await page.locator(".warehouse-card.missing-card").count(), 2);
+    for (const warehouse of nimrodMissingWarehouses) {
+      const card = page.locator(
+        `[data-warehouse-id="${warehouse.warehouse_id}"]`,
+      );
+      assert.equal(await card.count(), 1);
+      assert((await card.textContent()).includes("本小时无记录"));
+      assert((await card.textContent()).includes("当日覆盖 0/24 小时"));
+    }
+    const nimrodDaily = nimrod.daily_summary.find(item =>
+      item.date === catalog.latest_date
+    );
+    assert((await page.locator("#date option:checked").textContent()).includes(
+      `完整 ${nimrodDaily.complete_warehouse_count}/18 箱`
+    ));
+    assert((await page.locator("#coverage").textContent()).includes(
+      `${nimrodDaily.warehouses_without_data} 个矿箱当日无数据`
+    ));
+    assert((await page.locator("#count").textContent()).includes("18 个矿箱"));
     assert((await page.locator("#trend-title").textContent()).includes("Nimrod01"));
     const missingCapacity = catalog.warehouses.find(warehouse =>
       warehouse.data_center_name === "Nimrod01"
@@ -886,7 +922,7 @@ async function verifyBrowser(catalog) {
       warehouse.data_center_name === "Nimrod02"
       && !nimrod02ActiveIds.has(warehouse.warehouse_id)
     );
-    assert.equal(nimrod02Inactive.length, 2);
+    assert.equal(nimrod02Inactive.length, 0);
     await page.selectOption("#site", nimrod02.data_center_id);
     await page.waitForFunction(name =>
       document.querySelector("#brand-name")?.textContent === name, "Nimrod02");
@@ -895,14 +931,15 @@ async function verifyBrowser(catalog) {
       document.querySelector("#meta")?.textContent.includes(`当前 ${date}`),
       catalog.latest_date);
     assert.equal(await page.locator(".warehouse-card").count(),
-      nimrod02ActiveIds.size);
+      nimrod02.warehouse_count);
     assert((await page.locator("#count").textContent()).includes(
-      `${nimrod02ActiveIds.size} 个矿箱`
+      `${nimrod02.warehouse_count} 个矿箱`
     ));
-    for (const warehouse of nimrod02Inactive) {
-      assert.equal(await page.locator(
-        `[data-warehouse-id="${warehouse.warehouse_id}"]`
-      ).count(), 0);
+    const nimrod02WarehouseNames = await page.locator(
+      ".warehouse-card .card-title strong",
+    ).allTextContents();
+    for (const warehouseName of ["C17", "C18"]) {
+      assert(!nimrod02WarehouseNames.includes(warehouseName));
     }
     assert.equal(await page.locator(".lark-power-panel.unmatched").count(), 0);
 

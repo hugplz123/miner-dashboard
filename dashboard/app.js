@@ -187,11 +187,9 @@ function warehousesWithDataOnDate(site = currentSite(), date = selectedDate) {
 }
 
 function larkPowerSnapshot(site = currentSite(), date = selectedDate) {
-  const activeIds = warehousesWithDataOnDate(site, date);
   const rows = warehouses
     .filter(warehouse =>
       warehouse.data_center_id === site?.data_center_id
-      && (!activeIds || activeIds.has(warehouse.warehouse_id))
     )
     .map(warehouse => larkRecordFor(warehouse, date))
     .filter(Boolean);
@@ -240,9 +238,10 @@ function coverageLabel(observed, expected = expectedHoursPerDay) {
 function coverageParts(daily, site = currentSite()) {
   const observed = daily?.hours_with_data ?? daily?.hours?.length;
   const expected = daily?.expected_hours ?? expectedHoursPerDay;
-  const totalWarehouses = daily?.warehouses_with_data
-    ?? site?.warehouses_with_data
-    ?? site?.warehouse_count;
+  const totalWarehouses = daily?.warehouse_count
+    ?? site?.warehouse_count
+    ?? daily?.warehouses_with_data
+    ?? site?.warehouses_with_data;
   const completeWarehouses = daily?.complete_warehouse_count
     ?? Object.values(daily?.warehouse_hour_counts || {})
       .filter(count => count >= expected).length;
@@ -445,6 +444,7 @@ function renderCoverage(daily, site, lark) {
   const observed = daily?.hours_with_data ?? daily?.hours?.length ?? hours.length;
   const { completeWarehouses, totalWarehouses } = coverageParts(daily, site);
   const partialWarehouses = daily?.incomplete_warehouse_count || 0;
+  const warehousesWithoutData = daily?.warehouses_without_data || 0;
   const minimumHours = daily?.min_warehouse_hours;
   const complete = daily?.is_fully_complete
     ?? (observed === expected && partialWarehouses === 0);
@@ -457,6 +457,9 @@ function renderCoverage(daily, site, lark) {
         minimumHours == null ? "" : `，最少 ${minimumHours} 小时`
       }。`,
     );
+  }
+  if (warehousesWithoutData) {
+    details.push(`${warehousesWithoutData} 个矿箱当日无数据。`);
   }
   details.push(lark.available
     ? `Lark 使用 ${selectedDate} 当日快照。`
@@ -629,17 +632,18 @@ function render() {
   const centerId = $("site").value;
   const site = currentSite();
   const hour = Number($("hour").value);
-  currentRows = dayData.warehouse_rows.filter(row =>
-    row.data_center_id === centerId && row.hour === hour
-  );
-  const activeIds = warehousesWithDataOnDate(site, selectedDate);
   const siteWarehouses = warehouses.filter(warehouse =>
     warehouse.data_center_id === centerId
   );
-  const visibleWarehouses = activeIds
-    ? siteWarehouses.filter(warehouse => activeIds.has(warehouse.warehouse_id))
-    : siteWarehouses;
-  const activeWarehouseCount = visibleWarehouses.length;
+  const configuredIds = new Set(
+    siteWarehouses.map(warehouse => warehouse.warehouse_id),
+  );
+  currentRows = dayData.warehouse_rows.filter(row =>
+    row.data_center_id === centerId
+    && row.hour === hour
+    && configuredIds.has(row.warehouse_id)
+  );
+  const activeWarehouseCount = siteWarehouses.length;
   const machineCount = sum(currentRows, "machine_count");
   const actualPower = sum(currentRows, "actual_power_kw");
   const theoryPower = siteTheoreticalPower(dailyFor(selectedDate, site))
@@ -710,7 +714,7 @@ function render() {
     </div>`;
 
   const search = $("search").value.trim().toLowerCase();
-  let rows = visibleWarehouses.map(warehouse => {
+  let rows = siteWarehouses.map(warehouse => {
     const measured = currentRows.find(
       row => row.warehouse_id === warehouse.warehouse_id,
     );
