@@ -4,12 +4,12 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>多场地 · 矿箱负荷</title>
 <link rel="icon" href="data:,">
-<link rel="stylesheet" href="style.css?v=20261109p">
+<link rel="stylesheet" href="style.css?v=20261111f">
 <header><div class="brand"><span class="mark" id="brand-mark">M</span><strong id="brand-name">多场地</strong><span>矿箱负荷</span></div><span class="badge">近 7 天</span></header>
 <main>
   <div class="title"><div><h1>矿箱运行总览</h1><p id="meta">正在读取数据…</p></div><div class="title-controls"><label>场地 <select id="site" aria-label="场地"></select></label><label>日期 <select id="date" aria-label="日期"></select></label><label>数据小时 <select id="hour" aria-label="数据小时"></select></label></div></div>
   <div id="coverage" class="coverage-note" role="status"></div>
-  <div id="notice" class="notice">功率为矿机上报的小时平均值；理论余量尚未扣除安全裕度及供电约束。历史日期保留矿箱汇总，最新一天支持完整下钻。</div>
+  <div id="notice" class="notice">功率为矿机上报的小时平均值；单机功耗上限为 Nimrod01 3500 W、其他场地 4000 W。历史日期只提供已有明细缓存的下钻。</div>
   <div id="loading" class="loading" role="status" hidden><span class="loading-spinner" aria-hidden="true"></span><span id="loading-text">正在读取数据…</span></div>
   <section id="metrics" class="overview-metrics" aria-label="场地汇总"></section>
   <section class="trend"><div class="section-title"><div><h2 id="trend-title">场地功耗比趋势</h2><p id="trend-summary">正在计算…</p></div><div class="trend-tools"><div class="trend-controls"><div class="trend-metrics" role="group" aria-label="趋势指标"><button type="button" data-trend-metric="ratio" aria-pressed="true">功耗比</button><button type="button" data-trend-metric="power" aria-pressed="false">功率</button></div><div class="trend-modes" role="group" aria-label="趋势范围"><button type="button" data-trend-mode="daily" aria-pressed="true">近 7 天</button><button type="button" data-trend-mode="hourly" aria-pressed="false">当日小时</button></div></div><span id="trend-meta">样本功耗加权 · W/TH</span></div></div><div class="chart-wrap" id="chart-wrap"><svg id="trend" role="img" aria-label="场地功耗比趋势"></svg><div id="chart-tooltip" class="chart-tooltip" hidden></div></div><div class="chart-hint"><i data-lucide="mouse-pointer-click"></i><strong>点击趋势上的日期或小时，切换下方矿箱数据</strong></div></section>
@@ -18,8 +18,8 @@
   <p id="empty" hidden>没有符合条件的矿箱。</p></section>
   <footer>数据来源：矿机小时表 · 源温度已由 °F 换算为 °C · 拒绝率暂按比例值 · 功率为上报值，非电表实测</footer>
 </main>
-<dialog id="detail"><div class="dialog-head"><div><h2 id="detail-title"></h2><p id="detail-meta"></p></div><button id="close" aria-label="关闭详情" title="关闭详情"><i data-lucide="x"></i></button></div><div id="detail-metrics" class="metrics"></div><div id="detail-capacity" class="detail-capacity"></div><div class="tabs" role="tablist"><button role="tab" data-level="template_rows">算力组</button><button role="tab" data-level="model_rows">型号</button><button role="tab" data-level="work_mode_rows">档位</button><button role="tab" data-level="machine_rows">矿机</button></div><div id="detail-focus"></div><div class="detail-filter"><input id="detail-search" type="search" aria-label="筛选矿箱明细" placeholder="筛选算力组、型号、档位或 IP"></div><div id="detail-content" class="table-wrap"></div></dialog>
+<dialog id="detail"><div class="dialog-head"><div><h2 id="detail-title"></h2><p id="detail-meta"></p></div><button id="close" aria-label="关闭详情" title="关闭详情"><i data-lucide="x"></i></button></div><div id="detail-metrics" class="metrics"></div><div id="detail-capacity" class="detail-capacity"></div><div class="tabs" role="tablist"><button role="tab" data-level="template_rows">算力组</button><button role="tab" data-level="model_rows">型号</button><button role="tab" data-level="work_mode_rows">档位</button><button role="tab" data-level="machine_rows">矿机</button></div><div id="power-limit-panel"></div><div id="detail-focus"></div><div class="detail-filter"><input id="detail-search" type="search" aria-label="筛选矿箱明细" placeholder="筛选算力组、型号、档位或 IP"></div><div id="detail-content" class="table-wrap"></div></dialog>
 <dialog id="distribution" class="distribution-dialog"><div class="dialog-head"><div><h2 id="distribution-title"></h2><p id="distribution-meta"></p></div><button id="distribution-close" aria-label="关闭分布" title="关闭分布"><i data-lucide="x"></i></button></div><div id="distribution-summary" class="distribution-summary"></div><div id="distribution-charts" class="distribution-charts"></div><div class="distribution-actions"><button id="distribution-detail" type="button">查看完整明细<i data-lucide="arrow-up-right"></i></button></div></dialog>
 <script src="lucide.min.js"></script>
-  <script src="app.js?v=20261111e"></script>
+  <script src="app.js?v=20261111f"></script>
 </html>

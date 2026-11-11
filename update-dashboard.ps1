@@ -4,7 +4,8 @@ param(
     [string]$Date = "",
     [switch]$NoPublish,
     [switch]$SkipVerify,
-    [switch]$Refresh
+    [switch]$Refresh,
+    [switch]$BackfillDetails
 )
 
 $ErrorActionPreference = "Stop"
@@ -79,6 +80,9 @@ if ($Date) {
 }
 if ($Refresh) {
     $arguments += "--refresh-latest"
+}
+if ($BackfillDetails) {
+    $arguments += "--backfill-details"
 }
 
 & python @arguments

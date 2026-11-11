@@ -152,7 +152,7 @@ def import_published_days(destination, summary_root, dates):
 def run(config, end_date, days, summary_root, detail_root, destination,
         skip_existing=False, theoretical_power=DEFAULT_THEORETICAL_POWER_PATH,
         jobs=1, preserve_destination=False, published_base_url=None,
-        refresh_latest=False):
+        refresh_latest=False, backfill_details=False):
     dates = recent_dates(end_date, days)
     date_keys = {date.strftime("%Y%m%d") for date in dates}
     latest_key = dates[-1].strftime("%Y%m%d")
@@ -166,6 +166,7 @@ def run(config, end_date, days, summary_root, detail_root, destination,
     for date in dates:
         date_key = date.strftime("%Y%m%d")
         latest = date_key == latest_key
+        full_detail = latest or backfill_details
         for site in sorted(SITES):
             summary_path = (
                 summary_root / date_key
@@ -178,15 +179,17 @@ def run(config, end_date, days, summary_root, detail_root, destination,
             if skip_existing and not (latest and refresh_latest) and (
                 summary_path.exists()
             ) and (
-                not latest or detail_path.exists()
+                not full_detail or detail_path.exists()
             ):
                 print(f"Reuse {site} {date_key}", flush=True)
                 continue
-            tasks.append((date_key, latest, site))
+            tasks.append((date_key, full_detail, site))
 
     def run_task(task):
-        date_key, latest, site = task
-        output_dir = detail_root / date_key if latest else summary_root / date_key
+        date_key, full_detail, site = task
+        output_dir = (
+            detail_root / date_key if full_detail else summary_root / date_key
+        )
         export(
             config,
             date_key,
@@ -194,9 +197,9 @@ def run(config, end_date, days, summary_root, detail_root, destination,
             reuse=False,
             site=site,
             theoretical_power_path=theoretical_power,
-            summary_only=not latest,
+            summary_only=not full_detail,
         )
-        if latest:
+        if full_detail:
             destination_dir = summary_root / date_key
             destination_dir.mkdir(parents=True, exist_ok=True)
             shutil.copy2(
@@ -228,10 +231,9 @@ def run(config, end_date, days, summary_root, detail_root, destination,
         days=days,
         end_date=latest_key,
         detail_root=detail_root,
-        detail_date=latest_key,
     )
     clear_other_directories(summary_root, date_keys)
-    clear_other_directories(detail_root, {latest_key})
+    clear_other_directories(detail_root, date_keys)
 
 
 def main():
@@ -269,6 +271,13 @@ def main():
         help="Re-export the latest date even when a cached copy exists",
     )
     parser.add_argument(
+        "--backfill-details", action="store_true",
+        help=(
+            "Export full machine detail for every missing date in the "
+            "rolling window; existing detail dates are reused"
+        ),
+    )
+    parser.add_argument(
         "--jobs", type=int, default=1,
         help="Number of site/date exports to run concurrently",
     )
@@ -303,6 +312,7 @@ def main():
         args.preserve_destination,
         args.published_base_url,
         args.refresh_latest,
+        args.backfill_details,
     )
 
 

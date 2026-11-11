@@ -21,6 +21,7 @@ let selectedDate, dayData, detailData, detailBundle, level = "template_rows";
 let requestVersion = 0, dayRequestVersion = 0, trendMode = "daily";
 let trendMetric = "ratio", trendState = null, loadFilter = "all";
 let distributionWarehouseId = null;
+let powerLimitFilter = "all", detailPowerLimitW = null;
 const hourCache = new Map();
 const detailCache = new Map();
 
@@ -102,6 +103,38 @@ function powerGap(row) {
     value: theory - actual,
     over: theory < actual,
   };
+}
+
+function configuredPowerLimit(warehouse) {
+  const configured = Number(warehouse?.unit_power_limit_w);
+  if (Number.isFinite(configured) && configured > 0) return configured;
+  return String(warehouse?.data_center_name ?? "").trim().toLowerCase()
+    === "nimrod01" ? 3500 : 4000;
+}
+
+function machinePowerState(machine, limit = detailPowerLimitW) {
+  const power = Number(machine?.avg_power_w);
+  const ceiling = Number(limit);
+  if (!Number.isFinite(power) || !Number.isFinite(ceiling) || ceiling <= 0) {
+    return null;
+  }
+  return {
+    power,
+    limit: ceiling,
+    ratio: power / ceiling,
+    over: power > ceiling,
+  };
+}
+
+function matchesPowerLimitFilter(machine) {
+  if (powerLimitFilter === "all") return true;
+  const state = machinePowerState(machine);
+  const threshold = {
+    over100: 1,
+    over90: 0.9,
+    over80: 0.8,
+  }[powerLimitFilter];
+  return state && Number.isFinite(threshold) && state.ratio > threshold;
 }
 
 function syncTimeLabel(value) {
@@ -741,8 +774,8 @@ function render() {
 
   $("count").textContent = `${site.data_center_name} · ${rows.length} 个矿箱`;
   $("detail-note").textContent = detailAvailable()
-    ? "最新一天支持下钻到算力组、型号、档位和单机"
-    : "历史日期保留矿箱汇总；下钻明细仅保留最新一天";
+    ? "当前日期支持下钻到算力组、型号、档位和单机（含功耗上限）"
+    : "该日期只保留矿箱汇总；单机明细需当日导出";
   $("empty").hidden = rows.length > 0;
   $("cards").innerHTML = rows.map(cardHTML).join("");
   iconize();
@@ -1263,6 +1296,8 @@ async function openDetail(id, options = {}) {
   const token = ++requestVersion;
   detailData = null;
   detailBundle = null;
+  powerLimitFilter = "all";
+  detailPowerLimitW = configuredPowerLimit(warehouse);
   focusPeakMachineScope = options.dailyMachinePeak
     ? "day" : options.focusPeakMachine ? "hour" : null;
   level = focusPeakMachineScope ? "machine_rows" : "template_rows";
@@ -1275,6 +1310,7 @@ async function openDetail(id, options = {}) {
     renderDetailSummary(row, options);
   }
   $("detail-focus").innerHTML = "";
+  $("power-limit-panel").innerHTML = "";
   $("detail-search").value = "";
   $("detail").showModal();
   $("detail-content").innerHTML = "<p>正在读取矿箱明细…</p>";
@@ -1334,14 +1370,49 @@ async function revealDailyMachinePeak(id) {
   await openDetail(id, { dailyMachinePeak: true });
 }
 
+function renderPowerLimitPanel() {
+  const panel = $("power-limit-panel");
+  if (level !== "machine_rows" || !detailData) {
+    panel.innerHTML = "";
+    return;
+  }
+  const states = (detailData.machine_rows || [])
+    .map(machine => machinePowerState(machine))
+    .filter(Boolean);
+  const entries = [
+    ["all", "全部", (detailData.machine_rows || []).length],
+    ["over100", "> 100%", states.filter(state => state.ratio > 1).length],
+    ["over90", "> 90%", states.filter(state => state.ratio > 0.9).length],
+    ["over80", "> 80%", states.filter(state => state.ratio > 0.8).length],
+  ];
+  panel.innerHTML = `<div class="power-limit-summary">
+    <div class="power-limit-heading">
+      <span>单机功耗上限</span>
+      <strong>${fmt(detailPowerLimitW, 0)}<small>W</small></strong>
+      <em>按当前小时平均功耗判定</em>
+    </div>
+    <div class="power-limit-options" role="group" aria-label="按单机功耗上限筛选">
+      ${entries.map(([key, label, count]) => `
+        <button type="button" data-power-limit="${key}"
+          aria-pressed="${key === powerLimitFilter}">
+          <span>${label}</span>
+          <strong>${fmt(count, 0)}<small>台</small></strong>
+        </button>`).join("")}
+    </div>
+  </div>`;
+}
+
 function renderDetail() {
   document.querySelectorAll("[data-level]").forEach(button =>
     button.setAttribute("aria-selected", button.dataset.level === level));
   if (!detailData) return;
   const search = $("detail-search").value.trim().toLowerCase();
-  const rows = [...detailData[level]].filter(row =>
+  let rows = [...detailData[level]].filter(row =>
     [row.template_name, row.template_id, row.model, row.work_mode, row.ip]
       .some(value => String(value ?? "").toLowerCase().includes(search)));
+  if (level === "machine_rows" && powerLimitFilter !== "all") {
+    rows = rows.filter(matchesPowerLimitFilter);
+  }
   const peakMachine = level === "machine_rows"
     ? [...detailData.machine_rows].sort((a, b) =>
       (b.avg_power_w ?? -Infinity) - (a.avg_power_w ?? -Infinity))[0]
@@ -1358,10 +1429,20 @@ function renderDetail() {
   columns.push(
     ["平均算力 TH/s", "avg_hashrate_ths"],
     ["平均功耗 W", "avg_power_w"],
+  );
+  if (level === "machine_rows") {
+    columns.push(
+      ["单机上限 W", "__power_limit_w"],
+      ["占上限", "__power_limit_ratio"],
+      ["超上限 W", "__power_over_w"],
+    );
+  }
+  columns.push(
     ["功耗比 W/TH", level === "machine_rows" ? "power_ratio_w_per_th" : "power_ratio_overall_w_per_th"],
     ["拒绝率", level === "machine_rows" ? "rejected_rate" : "rejected_rate_avg"],
     ["温度 °C", level === "machine_rows" ? "temperature_c" : "temperature_avg_c"],
   );
+  renderPowerLimitPanel();
   if (focusPeakMachineScope && level === "machine_rows" && peakMachine) {
     const peakLabel = focusPeakMachineScope === "day"
       ? "当日最大功率矿机" : "本小时最大功率矿机";
@@ -1387,11 +1468,27 @@ function renderDetail() {
   $("detail-content").innerHTML = `<table><thead><tr>${columns.map(([label]) => `<th>${label}</th>`).join("")}</tr></thead><tbody>${rows.map(row => {
     const isPeakMachine = focusPeakMachineScope && level === "machine_rows"
       && peakMachine && row.ip === peakMachine.ip;
-    return `<tr class="${isPeakMachine ? "peak-machine-row" : ""}">${columns.map(([, key]) => {
-      const value = key.includes("rejected") ? percent(row[key])
-        : key.includes("power_ratio") ? fmtRatio(row[key])
-          : typeof row[key] === "number" ? fmt(row[key])
-            : row[key] ?? "未记录";
+    const powerState = level === "machine_rows"
+      ? machinePowerState(row) : null;
+    const rowClasses = [];
+    if (isPeakMachine) rowClasses.push("peak-machine-row");
+    if (powerState?.ratio > 1) rowClasses.push("machine-over-100");
+    else if (powerState?.ratio > 0.9) rowClasses.push("machine-over-90");
+    else if (powerState?.ratio > 0.8) rowClasses.push("machine-over-80");
+    return `<tr class="${rowClasses.join(" ")}">${columns.map(([, key]) => {
+      let value;
+      if (key === "__power_limit_w") value = fmt(powerState?.limit, 0);
+      else if (key === "__power_limit_ratio") {
+        value = percent(powerState?.ratio);
+      } else if (key === "__power_over_w") {
+        value = powerState?.over
+          ? `+${fmt(powerState.power - powerState.limit)}` : "—";
+      } else {
+        value = key.includes("rejected") ? percent(row[key])
+          : key.includes("power_ratio") ? fmtRatio(row[key])
+            : typeof row[key] === "number" ? fmt(row[key])
+              : row[key] ?? "未记录";
+      }
       return `<td>${esc(value)}</td>`;
     }).join("")}</tr>`;
   }).join("")}</tbody></table>${rows.length ? "" : "<p>没有符合条件的明细。</p>"}`;
@@ -1470,6 +1567,12 @@ $("distribution-detail").onclick = () => {
 document.querySelectorAll("[data-level]").forEach(button => {
   button.onclick = () => { level = button.dataset.level; renderDetail(); };
 });
+$("power-limit-panel").onclick = event => {
+  const button = event.target.closest("[data-power-limit]");
+  if (!button) return;
+  powerLimitFilter = button.dataset.powerLimit;
+  renderDetail();
+};
 document.querySelectorAll("[data-trend-mode]").forEach(button => {
   button.onclick = () => {
     trendMode = button.dataset.trendMode;

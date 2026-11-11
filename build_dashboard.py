@@ -22,6 +22,8 @@ PRIVATE_FIELDS = {"mac", "source_id", "worker_location"}
 EXPECTED_HOURS_PER_DAY = 24
 WAREHOUSE_NUMBER = re.compile(r"^C?0*(\d+)$", re.IGNORECASE)
 WAREHOUSE_COUNT_OVERRIDES = {"nimrod02": 16}
+DEFAULT_UNIT_POWER_LIMIT_W = 4000
+UNIT_POWER_LIMIT_OVERRIDES = {"nimrod01": 3500}
 
 
 def atomic_replace(source, target, attempts=10):
@@ -74,20 +76,29 @@ def discover_summary_sources(root, days=None, end_date=None):
     return available_dates, selected
 
 
-def discover_detail_sources(root, detail_date):
+def discover_detail_sources(root, detail_dates=None):
     root = Path(root) if root else None
     selected = {}
+    allowed_dates = (
+        {str(value).replace("-", "") for value in detail_dates}
+        if detail_dates is not None else None
+    )
     if root and root.exists():
         for path in root.rglob("*_dashboard.json"):
             if path.name.endswith("_warehouse_dashboard.json"):
                 continue
             match = DETAIL_PATTERN.match(path.name)
-            if not match or match.group("date") != str(detail_date):
+            if not match:
                 continue
-            site = match.group("site")
-            previous = selected.get(site)
+            if (
+                allowed_dates is not None
+                and match.group("date") not in allowed_dates
+            ):
+                continue
+            key = (match.group("date"), match.group("site"))
+            previous = selected.get(key)
             if previous is None or path.stat().st_mtime > previous.stat().st_mtime:
-                selected[site] = path
+                selected[key] = path
     return selected
 
 
@@ -109,6 +120,14 @@ def warehouse_allowed(site_name, warehouse_name):
     return (
         max_count is None
         or normalize_warehouse_number(warehouse_name) <= max_count
+    )
+
+
+def unit_power_limit_w(site_name):
+    """Return the configured per-machine power ceiling for a site."""
+    return UNIT_POWER_LIMIT_OVERRIDES.get(
+        str(site_name or "").strip().casefold(),
+        DEFAULT_UNIT_POWER_LIMIT_W,
     )
 
 
@@ -430,8 +449,13 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
         else destination / "data" / "lark_power_history"
     )
     dates, selected = discover_summary_sources(summary_root, days, end_date)
-    detail_date = str(detail_date or dates[-1]).replace("-", "")
-    detail_sources = discover_detail_sources(detail_root, detail_date)
+    requested_detail_dates = (
+        {str(detail_date).replace("-", "")}
+        if detail_date else set(dates)
+    )
+    detail_sources = discover_detail_sources(
+        detail_root, requested_detail_dates
+    )
 
     site_names = {}
     warehouses = {}
@@ -456,6 +480,7 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
                 "data_center_name": center_name,
                 "warehouse_id": row["warehouse_id"],
                 "warehouse_name": row["warehouse_name"],
+                "unit_power_limit_w": unit_power_limit_w(center_name),
             }
         rows_by_date[date].extend(
             row for row in slim.get("warehouse_rows", [])
@@ -479,6 +504,9 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
                     "data_center_name": full["data_center_name"],
                     "warehouse_id": row["warehouse_id"],
                     "warehouse_name": row["warehouse_name"],
+                    "unit_power_limit_w": unit_power_limit_w(
+                        full["data_center_name"]
+                    ),
                 }
         for level in DETAIL_LEVELS:
             for row in full.get(level, []):
@@ -642,6 +670,7 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
             "data_center_id": center_id,
             "data_center_name": center_name,
             "warehouse_count": len(site_warehouses),
+            "unit_power_limit_w": unit_power_limit_w(center_name),
             "warehouses_with_data": len({
                 row["warehouse_id"] for row in all_rows
                 if row["data_center_id"] == center_id
@@ -654,7 +683,7 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
         })
 
     catalog = {
-        "schema_version": "3.2",
+        "schema_version": "3.3",
         "purpose": "rolling_public_multisite_warehouse_hourly_dashboard",
         "date_range": {
             "start": iso_date(dates[0]),
@@ -663,7 +692,9 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
         },
         "latest_date": iso_date(dates[-1]),
         "available_dates": [iso_date(date) for date in dates],
-        "detail_dates": sorted({iso_date(detail_date)}) if bundles else [],
+        "detail_dates": sorted({
+            iso_date(date) for _, date, _ in bundles
+        }),
         "exported_at": source_exported_at([
             *selected.values(),
             *detail_sources.values(),
@@ -710,10 +741,13 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
                 }
                 remove_children(date_dir, expected_names)
 
+    detail_date_labels = sorted({
+        iso_date(date) for _, date, _ in bundles
+    })
     print(
         f"Published {len(site_rows)} sites, {len(dates)} days, "
         f"{len(all_rows)} warehouse hours; details for {len(bundles)} "
-        f"warehouse-days on {iso_date(detail_date)}; Lark "
+        f"warehouse-days on {', '.join(detail_date_labels) or 'no dates'}; Lark "
         f"{len(lark_snapshots)} dated snapshot(s) "
         f"to {destination.resolve()}"
     )
@@ -727,7 +761,13 @@ def main():
     parser.add_argument(
         "--detail-root", type=Path, default=Path("outputs/detail-cache")
     )
-    parser.add_argument("--detail-date", help="YYYYMMDD detail date; default latest")
+    parser.add_argument(
+        "--detail-date",
+        help=(
+            "YYYYMMDD detail date; default includes every available "
+            "detail date in the rolling range"
+        ),
+    )
     parser.add_argument("--days", type=int, default=7)
     parser.add_argument("--end-date", help="YYYYMMDD; default latest available")
     parser.add_argument("--destination", type=Path, default=Path("dashboard"))

@@ -22,6 +22,13 @@ const EXPECTED_LARK_COUNTS = {
   Nimrod02: 16,
   WhiteOak01: 40,
 };
+const EXPECTED_UNIT_POWER_LIMITS = {
+  Blossom01: 4000,
+  May01: 4000,
+  Nimrod01: 3500,
+  Nimrod02: 4000,
+  WhiteOak01: 4000,
+};
 const LARK_RECORD_FIELDS = [
   "mounted_machine_count",
   "mounted_power_kw",
@@ -147,7 +154,7 @@ function larkKey(site, warehouseNumber) {
 
 function verifyPublishedData() {
   const catalog = readJson(path.join(DATA, "catalog.json"));
-  assert.equal(catalog.schema_version, "3.2");
+  assert.equal(catalog.schema_version, "3.3");
   assert.equal(catalog.date_range.days, 7);
   assert.equal(catalog.available_dates.length, 7);
   assert.deepEqual(catalog.available_dates, [...catalog.available_dates].sort());
@@ -155,7 +162,26 @@ function verifyPublishedData() {
     catalog.sites.map(site => site.data_center_name).sort(),
     EXPECTED_SITES,
   );
-  assert.deepEqual(catalog.detail_dates, [catalog.latest_date]);
+  assert.deepEqual(
+    catalog.detail_dates,
+    [...catalog.detail_dates].sort(),
+  );
+  assert(catalog.detail_dates.length > 0, "missing detail dates");
+  for (const date of catalog.detail_dates) {
+    assert(catalog.available_dates.includes(date));
+  }
+  for (const site of catalog.sites) {
+    assert.equal(
+      site.unit_power_limit_w,
+      EXPECTED_UNIT_POWER_LIMITS[site.data_center_name],
+    );
+  }
+  for (const warehouse of catalog.warehouses) {
+    assert.equal(
+      warehouse.unit_power_limit_w,
+      EXPECTED_UNIT_POWER_LIMITS[warehouse.data_center_name],
+    );
+  }
 
   const lark = readJson(path.join(DATA, "lark_power.json"));
   const larkHistoryDir = path.join(DATA, "lark_power_history");
@@ -465,58 +491,60 @@ function verifyPublishedData() {
     assert(close(expectedOverallRatio(rows), daily.power_ratio_overall_w_per_th));
   }
 
-  const latestRows = rowsByDate.get(catalog.latest_date);
-  const grouped = new Map();
-  for (const row of latestRows) {
-    const key = `${row.data_center_id}/${row.warehouse_id}`;
-    if (!grouped.has(key)) grouped.set(key, []);
-    grouped.get(key).push(row);
-  }
-
   let machineHours = 0;
-  for (const [key, rows] of grouped) {
-    const [centerId, warehouseId] = key.split("/");
-    const bundleFile = path.join(
-      DATA, "details", centerId,
-      catalog.latest_date.replaceAll("-", ""),
-      `${warehouseId}.json.gz`,
-    );
-    assert(fs.existsSync(bundleFile), `missing detail: ${bundleFile}`);
-    const bundle = JSON.parse(zlib.gunzipSync(fs.readFileSync(bundleFile)));
-    assert.equal(bundle.schema_version, "3.0");
-    assert.equal(bundle.data_center_id, centerId);
-    assert.equal(bundle.warehouse_id, warehouseId);
-    assert.deepEqual(
-      Object.keys(bundle.hours).sort(),
-      [...new Set(rows.map(row => String(row.hour)))].sort(),
-    );
+  for (const detailDate of catalog.detail_dates) {
+    const grouped = new Map();
+    for (const row of rowsByDate.get(detailDate)) {
+      const key = `${row.data_center_id}/${row.warehouse_id}`;
+      if (!grouped.has(key)) grouped.set(key, []);
+      grouped.get(key).push(row);
+    }
 
-    for (const row of rows) {
-      const detail = bundle.hours[String(row.hour)];
-      assert(detail, `missing hour detail: ${key}/${row.hour}`);
-      const machines = detail.machine_rows;
-      assert.equal(machines.length, row.machine_count);
-      assert.equal(new Set(machines.map(machine => machine.ip)).size,
-        row.machine_count);
-      for (const level of DETAIL_LEVELS.slice(0, 3)) {
-        assert.equal(sum(detail[level], "machine_count"), row.machine_count);
-      }
-      for (const machine of machines) {
-        assert(!("mac" in machine));
-        assert(!("source_id" in machine));
-        assert(!("worker_location" in machine));
-      }
-      assert(close(sum(machines, "avg_power_w") / 1000,
-        row.actual_power_kw));
-      assert.equal(
-        machines.filter(machine =>
-          machine.avg_hashrate_ths > 0 && machine.avg_power_w > 0
-        ).length,
-        row.power_ratio_sample_count,
+    for (const [key, rows] of grouped) {
+      const [centerId, warehouseId] = key.split("/");
+      const bundleFile = path.join(
+        DATA, "details", centerId,
+        detailDate.replaceAll("-", ""),
+        `${warehouseId}.json.gz`,
       );
-      assert(close(expectedOverallRatio([row]),
-        row.power_ratio_overall_w_per_th));
-      machineHours += machines.length;
+      assert(fs.existsSync(bundleFile), `missing detail: ${bundleFile}`);
+      const bundle = JSON.parse(zlib.gunzipSync(fs.readFileSync(bundleFile)));
+      assert.equal(bundle.schema_version, "3.0");
+      assert.equal(bundle.data_center_id, centerId);
+      assert.equal(bundle.date, detailDate);
+      assert.equal(bundle.warehouse_id, warehouseId);
+      assert.deepEqual(
+        Object.keys(bundle.hours).sort(),
+        [...new Set(rows.map(row => String(row.hour)))].sort(),
+      );
+
+      for (const row of rows) {
+        const detail = bundle.hours[String(row.hour)];
+        assert(detail, `missing hour detail: ${key}/${row.hour}`);
+        const machines = detail.machine_rows;
+        assert.equal(machines.length, row.machine_count);
+        assert.equal(new Set(machines.map(machine => machine.ip)).size,
+          row.machine_count);
+        for (const level of DETAIL_LEVELS.slice(0, 3)) {
+          assert.equal(sum(detail[level], "machine_count"), row.machine_count);
+        }
+        for (const machine of machines) {
+          assert(!("mac" in machine));
+          assert(!("source_id" in machine));
+          assert(!("worker_location" in machine));
+        }
+        assert(close(sum(machines, "avg_power_w") / 1000,
+          row.actual_power_kw));
+        assert.equal(
+          machines.filter(machine =>
+            machine.avg_hashrate_ths > 0 && machine.avg_power_w > 0
+          ).length,
+          row.power_ratio_sample_count,
+        );
+        assert(close(expectedOverallRatio([row]),
+          row.power_ratio_overall_w_per_th));
+        machineHours += machines.length;
+      }
     }
   }
 
@@ -814,21 +842,41 @@ async function verifyBrowser(catalog) {
     await page.waitForFunction(date =>
       document.querySelector("#meta")?.textContent.includes(`当前 ${date}`),
       firstDate);
+    const firstDateHasDetail = catalog.detail_dates.includes(firstDate);
     assert.equal(await page.locator(
       ".warehouse-card .card-head button:not([disabled])",
-    ).count(), 0);
+    ).count(), firstDateHasDetail
+      ? await page.locator(
+        ".warehouse-card .card-head button[data-detail-id]",
+      ).count()
+      : 0);
     assert.equal(await page.locator(
       ".warehouse-card .peak-actions button:not([disabled])",
-    ).count(), 0);
+    ).count(), firstDateHasDetail
+      ? await page.locator(".peak-actions button").count()
+      : 0);
     assert(await page.locator(
       ".warehouse-card [data-distribution-id]:not([disabled])",
     ).count() > 0);
     await page.locator(
       ".warehouse-card [data-distribution-id]:not([disabled])",
     ).first().click();
-    assert(await page.locator("#distribution-detail").isDisabled());
+    assert.equal(
+      await page.locator("#distribution-detail").isDisabled(),
+      !firstDateHasDetail,
+    );
     await page.locator("#distribution-close").click();
-    assert((await page.locator("#detail-note").textContent()).includes("历史日期"));
+    if (firstDateHasDetail) {
+      assert((await page.locator("#detail-note").textContent())
+        .includes("当前日期支持下钻"));
+      await page.locator(".warehouse-card [data-detail-id]").first().click();
+      await page.waitForSelector("#detail-content tbody tr");
+      assert(await page.locator("#detail").evaluate(dialog => dialog.open));
+      await page.locator("#close").click();
+    } else {
+      assert((await page.locator("#detail-note").textContent())
+        .includes("单机明细需当日导出"));
+    }
     assert.equal(await page.locator(".warehouse-card .capacity-row").count(), 0);
     assert.equal(await page.locator(".warehouse-card .lark-power-panel.snapshot-missing")
       .count(), await page.locator(".warehouse-card:not(.missing-card)").count());
@@ -935,8 +983,8 @@ async function verifyBrowser(catalog) {
       .includes(dayPeakMachine.machine.model));
     assert((await page.locator(".peak-machine-callout").textContent())
       .includes(dayPeakMachine.machine.ip));
-    assert.equal(await page.locator("#detail-content tbody tr").first()
-      .getAttribute("class"), "peak-machine-row");
+    assert((await page.locator("#detail-content tbody tr").first()
+      .getAttribute("class")).split(" ").includes("peak-machine-row"));
     assert((await page.locator("#detail-content tbody tr").first().textContent())
       .includes(dayPeakMachine.machine.ip));
     await page.screenshot({
@@ -946,9 +994,11 @@ async function verifyBrowser(catalog) {
     await page.locator("#close").click();
 
     const detailRequestsBefore = requests.length;
-    await page.locator(
+    const detailButton = page.locator(
       `.warehouse-card .card-head button[data-detail-id]:not([data-detail-id="${peakId}"])`,
-    ).first().click();
+    ).first();
+    const openedDetailId = await detailButton.getAttribute("data-detail-id");
+    await detailButton.click();
     await page.waitForSelector("#detail-content tbody tr");
     const detailRequest = requests.slice(detailRequestsBefore)
       .find(url => url.includes("/data/details/"));
@@ -960,6 +1010,58 @@ async function verifyBrowser(catalog) {
       await page.locator(`[data-level="${tab}"]`).click();
       assert(await page.locator("#detail-content tbody tr").count() > 0);
     }
+    const openedHour = Number(await page.locator("#hour").inputValue());
+    const openedDetail = readGzipJson(path.join(
+      DATA,
+      "details",
+      whiteoak.data_center_id,
+      latestDate.replaceAll("-", ""),
+      `${openedDetailId}.json.gz`,
+    ));
+    const openedMachines = openedDetail.hours[String(openedHour)].machine_rows;
+    const unitLimit = EXPECTED_UNIT_POWER_LIMITS.WhiteOak01;
+    const expectedPowerCounts = {
+      all: openedMachines.length,
+      over100: openedMachines.filter(machine =>
+        Number(machine.avg_power_w) > unitLimit
+      ).length,
+      over90: openedMachines.filter(machine =>
+        Number(machine.avg_power_w) > unitLimit * 0.9
+      ).length,
+      over80: openedMachines.filter(machine =>
+        Number(machine.avg_power_w) > unitLimit * 0.8
+      ).length,
+    };
+    assert((await page.locator(".power-limit-heading").textContent())
+      .replaceAll(",", "").includes(`${unitLimit}`));
+    const powerFilterCount = async key => Number(
+      (await page.locator(
+        `[data-power-limit="${key}"] strong`,
+      ).textContent()).replace(/[^\d]/g, "")
+    );
+    for (const [key, expected] of Object.entries(expectedPowerCounts)) {
+      assert.equal(await powerFilterCount(key), expected);
+    }
+    assert.deepEqual(
+      await page.locator("#detail-content th").allTextContents(),
+      [
+        "算力组", "型号", "档位", "IP", "平均算力 TH/s", "平均功耗 W",
+        "单机上限 W", "占上限", "超上限 W", "功耗比 W/TH", "拒绝率",
+        "温度 °C",
+      ],
+    );
+    for (const key of ["over100", "over90", "over80"]) {
+      await page.locator(`[data-power-limit="${key}"]`).click();
+      assert.equal(
+        await page.locator("#detail-content tbody tr").count(),
+        expectedPowerCounts[key],
+      );
+    }
+    await page.locator('[data-power-limit="all"]').click();
+    assert.equal(
+      await page.locator("#detail-content tbody tr").count(),
+      expectedPowerCounts.all,
+    );
     await page.locator("#close").click();
     await page.screenshot({
       path: path.join(ROOT, "outputs", "dashboard-check", "desktop.png"),
