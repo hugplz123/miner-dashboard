@@ -464,7 +464,7 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
 
     day_files = set()
     for date, rows in rows_by_date.items():
-        payload = {
+        date_payload = {
             "schema_version": "3.0",
             "date": iso_date(date),
             "warehouse_rows": sorted(
@@ -477,7 +477,27 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
         }
         name = f"{date}.json.gz"
         day_files.add(name)
-        write_gzip_json(days_dir / name, payload)
+        write_gzip_json(days_dir / name, date_payload)
+
+        # Keep the full-day bundle for rolling imports, but let the browser
+        # download only the selected site's rows.
+        rows_by_site = defaultdict(list)
+        for row in rows:
+            rows_by_site[row["data_center_id"]].append(row)
+        for center_id, site_rows in rows_by_site.items():
+            site_payload = {
+                "schema_version": "3.0",
+                "date": iso_date(date),
+                "warehouse_rows": sorted(
+                    site_rows,
+                    key=lambda row: (
+                        row["hour"], row["warehouse_name"],
+                    ),
+                ),
+            }
+            site_name = f"{center_id}-{date}.json.gz"
+            day_files.add(site_name)
+            write_gzip_json(days_dir / site_name, site_payload)
 
     bundles = defaultdict(lambda: {"hours": {}})
     for (center_id, hour, warehouse_id), payload in details.items():

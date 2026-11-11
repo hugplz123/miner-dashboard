@@ -285,19 +285,28 @@ function populateHours() {
   if (hours.length) $("hour").value = hours[hours.length - 1];
 }
 
-async function loadDay(date) {
-  if (dayCache.has(date)) return dayCache.get(date);
+function loadDay(siteId, date) {
+  const cacheKey = `${siteId}/${date}`;
+  if (dayCache.has(cacheKey)) return dayCache.get(cacheKey);
   const version = encodeURIComponent(catalog.exported_at || catalog.latest_date);
   const promise = fetchGzipJson(
-    `data/days/${compactDate(date)}.json.gz?v=${version}`
+    `data/days/${siteId}-${compactDate(date)}.json.gz?v=${version}`
   );
-  dayCache.set(date, promise);
-  try {
-    return await promise;
-  } catch (error) {
-    dayCache.delete(date);
-    throw error;
-  }
+  dayCache.set(cacheKey, promise);
+  promise.catch(() => dayCache.delete(cacheKey));
+  return promise;
+}
+
+function primeDayCache(siteId) {
+  const site = sites.find(item => item.data_center_id === siteId);
+  const queue = [...(site?.available_dates || [])];
+  const schedule = window.requestIdleCallback || (callback =>
+    setTimeout(callback, 250));
+  schedule(() => {
+    for (const date of queue) {
+      loadDay(siteId, date).catch(() => {});
+    }
+  });
 }
 
 function setLoading(active, text = "") {
@@ -1103,6 +1112,7 @@ function showTooltip(event) {
 
 async function selectDate(date, preferredHour) {
   const token = ++dayRequestVersion;
+  const siteId = currentSite()?.data_center_id;
   const previousDate = selectedDate;
   const previousHour = $("hour").value;
   selectedDate = date;
@@ -1116,11 +1126,12 @@ async function selectDate(date, preferredHour) {
   $("meta").textContent = `${catalog.date_range.start} 至 ${catalog.date_range.end} · 正在读取 ${date} · ${siteCoverageLabel(daily)} · ${currentSite().warehouses_with_data} 个矿箱`;
   setLoading(true, `正在加载 ${date} 的数据，请稍候…`);
   try {
-    const payload = await loadDay(date);
+    const payload = await loadDay(siteId, date);
     if (token !== dayRequestVersion) return;
     dayData = payload;
     setLoading(false);
     render();
+    primeDayCache(siteId);
   } catch (error) {
     if (token !== dayRequestVersion) return;
     if (previousDate) {

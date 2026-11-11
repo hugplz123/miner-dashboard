@@ -240,6 +240,26 @@ function verifyPublishedData() {
     }
     rowsByDate.set(date, day.warehouse_rows);
     allRows += day.warehouse_rows.length;
+
+    for (const site of catalog.sites) {
+      if (!site.available_dates.includes(date)) continue;
+      const siteFile = path.join(
+        DATA, "days", `${site.data_center_id}-${date.replaceAll("-", "")}.json.gz`,
+      );
+      assert(fs.existsSync(siteFile), `missing site day file: ${siteFile}`);
+      const siteDay = readGzipJson(siteFile);
+      assert.equal(siteDay.schema_version, "3.0");
+      assert.equal(siteDay.date, date);
+      assert(siteDay.warehouse_rows.every(
+        row => row.data_center_id === site.data_center_id,
+      ));
+      assert.deepEqual(
+        siteDay.warehouse_rows,
+        day.warehouse_rows.filter(
+          row => row.data_center_id === site.data_center_id,
+        ),
+      );
+    }
   }
 
   const nimrod02Warehouses = catalog.warehouses.filter(warehouse =>
@@ -954,15 +974,19 @@ async function verifyBrowser(catalog) {
     const raceDayFile = raceDate.replaceAll("-", "");
     await racePage.route("**/data/days/*.json*", async route => {
       const url = route.request().url();
-      const isLatest = url.includes(`/${latestDayFile}.json`);
-      const isRaceDay = url.includes(`/${raceDayFile}.json`);
+      const isLatest = url.includes(`-${latestDayFile}.json`);
+      const isRaceDay = url.includes(`-${raceDayFile}.json`);
       if (!isLatest && !isRaceDay) {
         await route.continue();
         return;
       }
       if (isLatest) await new Promise(resolve => setTimeout(resolve, 2500));
+      const routeCenter = isLatest ? whiteoak.data_center_id : raceSite.data_center_id;
       await route.fulfill({
-        path: path.join(DATA, "days", `${isLatest ? latestDayFile : raceDayFile}.json.gz`),
+        path: path.join(
+          DATA, "days",
+          `${routeCenter}-${isLatest ? latestDayFile : raceDayFile}.json.gz`,
+        ),
         contentType: "application/gzip",
       });
     });
