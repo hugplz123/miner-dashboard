@@ -1050,6 +1050,14 @@ async function verifyBrowser(catalog) {
         "温度 °C",
       ],
     );
+    const ratioLabels = await page.locator(
+      "#detail-content tbody tr td:nth-child(8)",
+    ).allTextContents();
+    assert(
+      ratioLabels.every(value =>
+        value.trim() === "—" || /^\d[\d,]*\.\d{2}%$/.test(value.trim())),
+      "power limit ratios should show two decimals",
+    );
     for (const key of ["over100", "over90", "over80"]) {
       await page.locator(`[data-power-limit="${key}"]`).click();
       assert.equal(

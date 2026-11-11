@@ -10,6 +10,11 @@ const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
 }[c]));
 const percent = n => n == null || !Number.isFinite(n) ? "—" : `${fmt(n * 100)}%`;
+const percent2 = n => n == null || !Number.isFinite(n)
+  ? "—" : `${n.toLocaleString("zh-CN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}%`;
 const sum = (rows, key) => rows.reduce((total, row) => total + (row[key] ?? 0), 0);
 const compactDate = date => String(date).replaceAll("-", "");
 const shortDate = date => String(date).slice(5);
@@ -1479,7 +1484,7 @@ function renderDetail() {
       let value;
       if (key === "__power_limit_w") value = fmt(powerState?.limit, 0);
       else if (key === "__power_limit_ratio") {
-        value = percent(powerState?.ratio);
+        value = percent2(powerState == null ? null : powerState.ratio * 100);
       } else if (key === "__power_over_w") {
         value = powerState?.over
           ? `+${fmt(powerState.power - powerState.limit)}` : "—";
