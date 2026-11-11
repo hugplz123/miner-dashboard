@@ -297,16 +297,26 @@ function loadDay(siteId, date) {
   return promise;
 }
 
+let prefetchSiteId = null;
+
 function primeDayCache(siteId) {
   const site = sites.find(item => item.data_center_id === siteId);
-  const queue = [...(site?.available_dates || [])];
+  const queue = [...(site?.available_dates || [])]
+    .filter(date => !dayCache.has(`${siteId}/${date}`));
+  if (!queue.length) return;
+  prefetchSiteId = siteId;
   const schedule = window.requestIdleCallback || (callback =>
     setTimeout(callback, 250));
-  schedule(() => {
-    for (const date of queue) {
-      loadDay(siteId, date).catch(() => {});
-    }
-  });
+
+  const primeNext = () => {
+    if (!queue.length || prefetchSiteId !== siteId) return;
+    schedule(() => {
+      if (prefetchSiteId !== siteId) return;
+      const date = queue.shift();
+      loadDay(siteId, date).catch(() => {}).finally(primeNext);
+    }, { timeout: 1500 });
+  };
+  primeNext();
 }
 
 function setLoading(active, text = "") {
