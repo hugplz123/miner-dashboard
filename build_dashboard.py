@@ -17,7 +17,9 @@ DETAIL_PATTERN = re.compile(
     r"^(?P<site>.+?)_(?P<date>\d{8})_dashboard\.json$"
 )
 LARK_SNAPSHOT_PATTERN = re.compile(r"^(?P<date>\d{8})\.json$")
-DETAIL_LEVELS = ("template_rows", "model_rows", "work_mode_rows", "machine_rows")
+SUMMARY_DETAIL_LEVELS = ("template_rows", "model_rows", "work_mode_rows")
+DETAIL_LEVELS = (*SUMMARY_DETAIL_LEVELS, "machine_rows")
+DETAIL_SCHEMA_VERSION = "4.0"
 PRIVATE_FIELDS = {"mac", "source_id", "worker_location"}
 EXPECTED_HOURS_PER_DAY = 24
 WAREHOUSE_NUMBER = re.compile(r"^C?0*(\d+)$", re.IGNORECASE)
@@ -623,9 +625,42 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
     detail_paths = set()
     for (center_id, date, warehouse_id), payload in bundles.items():
         # Day folders use the compact YYYYMMDD key, matching the frontend.
-        relative = Path(center_id) / str(date) / f"{warehouse_id}.json.gz"
-        detail_paths.add(relative.as_posix())
-        write_gzip_json(details_dir / relative, payload)
+        metadata = {
+            "schema_version": DETAIL_SCHEMA_VERSION,
+            "data_center_id": payload["data_center_id"],
+            "data_center_name": payload["data_center_name"],
+            "date": payload["date"],
+            "warehouse_id": payload["warehouse_id"],
+            "warehouse_name": payload["warehouse_name"],
+        }
+        summary_payload = {
+            **metadata,
+            "detail_kind": "summary",
+            "hours": {
+                hour: {
+                    level: hour_payload[level]
+                    for level in SUMMARY_DETAIL_LEVELS
+                }
+                for hour, hour_payload in payload["hours"].items()
+            },
+        }
+        machine_payload = {
+            **metadata,
+            "detail_kind": "machines",
+            "hours": {
+                hour: {"machine_rows": hour_payload["machine_rows"]}
+                for hour, hour_payload in payload["hours"].items()
+            },
+        }
+        folder = Path(center_id) / str(date)
+        summary_relative = folder / f"{warehouse_id}.summary.json.gz"
+        machine_relative = folder / f"{warehouse_id}.machines.json.gz"
+        detail_paths.update({
+            summary_relative.as_posix(),
+            machine_relative.as_posix(),
+        })
+        write_gzip_json(details_dir / summary_relative, summary_payload)
+        write_gzip_json(details_dir / machine_relative, machine_payload)
 
     site_rows = []
     daily_summary = []

@@ -51,6 +51,39 @@ function readGzipJson(file) {
   return JSON.parse(zlib.gunzipSync(fs.readFileSync(file)).toString("utf8"));
 }
 
+function readDetailBundle(centerId, detailDate, warehouseId) {
+  const folder = path.join(
+    DATA, "details", centerId, detailDate.replaceAll("-", ""),
+  );
+  const summaryFile = path.join(folder, `${warehouseId}.summary.json.gz`);
+  const machineFile = path.join(folder, `${warehouseId}.machines.json.gz`);
+  assert(fs.existsSync(summaryFile), `missing detail summary: ${summaryFile}`);
+  assert(fs.existsSync(machineFile), `missing detail machines: ${machineFile}`);
+  const summary = readGzipJson(summaryFile);
+  const machines = readGzipJson(machineFile);
+  for (const [bundle, kind] of [
+    [summary, "summary"], [machines, "machines"],
+  ]) {
+    assert.equal(bundle.schema_version, "4.0");
+    assert.equal(bundle.detail_kind, kind);
+    assert.equal(bundle.data_center_id, centerId);
+    assert.equal(bundle.date, detailDate);
+    assert.equal(bundle.warehouse_id, warehouseId);
+  }
+  assert.deepEqual(
+    Object.keys(summary.hours).sort(),
+    Object.keys(machines.hours).sort(),
+  );
+  const hours = {};
+  for (const hour of Object.keys(summary.hours)) {
+    hours[hour] = {
+      ...summary.hours[hour],
+      ...machines.hours[hour],
+    };
+  }
+  return { ...summary, hours };
+}
+
 function close(actual, expected, tolerance = 1e-7) {
   if (actual == null && expected == null) return true;
   if (!Number.isFinite(actual) || !Number.isFinite(expected)) return false;
@@ -502,14 +535,7 @@ function verifyPublishedData() {
 
     for (const [key, rows] of grouped) {
       const [centerId, warehouseId] = key.split("/");
-      const bundleFile = path.join(
-        DATA, "details", centerId,
-        detailDate.replaceAll("-", ""),
-        `${warehouseId}.json.gz`,
-      );
-      assert(fs.existsSync(bundleFile), `missing detail: ${bundleFile}`);
-      const bundle = JSON.parse(zlib.gunzipSync(fs.readFileSync(bundleFile)));
-      assert.equal(bundle.schema_version, "3.0");
+      const bundle = readDetailBundle(centerId, detailDate, warehouseId);
       assert.equal(bundle.data_center_id, centerId);
       assert.equal(bundle.date, detailDate);
       assert.equal(bundle.warehouse_id, warehouseId);
@@ -911,13 +937,9 @@ async function verifyBrowser(catalog) {
       !best || row.actual_power_kw > best.actual_power_kw ? row : best,
     null);
     assert(peak, "peak warehouse hour not found");
-    const peakDetail = readGzipJson(path.join(
-      DATA,
-      "details",
-      whiteoak.data_center_id,
-      latestDate.replaceAll("-", ""),
-      `${peakId}.json.gz`,
-    ));
+    const peakDetail = readDetailBundle(
+      whiteoak.data_center_id, latestDate, peakId,
+    );
     const dayPeakMachine = Object.entries(peakDetail.hours).reduce(
       (best, [hour, data]) => {
         const machine = data.machine_rows.reduce((candidate, item) =>
@@ -1003,21 +1025,30 @@ async function verifyBrowser(catalog) {
     const detailRequest = requests.slice(detailRequestsBefore)
       .find(url => url.includes("/data/details/"));
     assert(detailRequest, "detail request not found");
-    assert(/\.json\.gz(?:\?|$)/.test(detailRequest));
+    assert(detailRequest.includes(".summary.json.gz"));
+    assert(!detailRequest.includes(".machines.json.gz"));
+    assert(!requests.slice(detailRequestsBefore)
+      .some(url => url.includes(".machines.json.gz")));
     assert((await page.locator("#detail-meta").textContent()).includes("WhiteOak01"));
     assert.equal(await page.locator("#detail-capacity .capacity-row").count(), 2);
-    for (const tab of ["model_rows", "work_mode_rows", "machine_rows"]) {
+    for (const tab of ["model_rows", "work_mode_rows"]) {
       await page.locator(`[data-level="${tab}"]`).click();
       assert(await page.locator("#detail-content tbody tr").count() > 0);
     }
+    const machineRequestsBefore = requests.length;
+    await Promise.all([
+      page.waitForResponse(response =>
+        response.url().includes(".machines.json.gz") && response.ok()
+      ),
+      page.locator('[data-level="machine_rows"]').click(),
+    ]);
+    await page.waitForSelector("#detail-content tbody tr");
+    assert(requests.slice(machineRequestsBefore)
+      .some(url => url.includes(".machines.json.gz")));
     const openedHour = Number(await page.locator("#hour").inputValue());
-    const openedDetail = readGzipJson(path.join(
-      DATA,
-      "details",
-      whiteoak.data_center_id,
-      latestDate.replaceAll("-", ""),
-      `${openedDetailId}.json.gz`,
-    ));
+    const openedDetail = readDetailBundle(
+      whiteoak.data_center_id, latestDate, openedDetailId,
+    );
     const openedMachines = openedDetail.hours[String(openedHour)].machine_rows;
     const unitLimit = EXPECTED_UNIT_POWER_LIMITS.WhiteOak01;
     const expectedPowerCounts = {

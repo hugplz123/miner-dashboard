@@ -22,13 +22,14 @@ const hourLabel = hour => `${String(hour).slice(0, 4)}-${String(hour).slice(4, 6
 const expectedHoursPerDay = 24;
 const palette = ["#3f8273", "#557fa4", "#bd9147", "#937190", "#b56e55", "#72906d", "#80795f", "#5f8790"];
 let catalog, sites = [], warehouses = [], dates = [], hours = [], currentRows = [];
-let selectedDate, dayData, detailData, detailBundle, level = "template_rows";
+let selectedDate, dayData, detailData, detailContext, level = "template_rows";
 let requestVersion = 0, dayRequestVersion = 0, trendMode = "daily";
 let trendMetric = "ratio", trendState = null, loadFilter = "all";
 let distributionWarehouseId = null;
 let powerLimitFilter = "all", detailPowerLimitW = null;
 const hourCache = new Map();
-const detailCache = new Map();
+const detailSummaryCache = new Map();
+const detailMachineCache = new Map();
 
 function iconize() {
   if (window.lucide) window.lucide.createIcons();
@@ -1246,6 +1247,26 @@ async function fetchGzipJson(url, timeoutMs = 45000) {
   }
 }
 
+function detailContextKey(context) {
+  return `${context.dataCenterId}/${compactDate(context.date)}/${context.warehouseId}`;
+}
+
+function fetchDetailPackage(kind, context) {
+  const cache = kind === "machines"
+    ? detailMachineCache : detailSummaryCache;
+  const key = detailContextKey(context);
+  if (!cache.has(key)) {
+    const filename = `${context.warehouseId}.${kind}.json.gz`;
+    const url = `data/details/${context.dataCenterId}/${compactDate(context.date)}/${filename}?v=${encodeURIComponent(catalog.exported_at || catalog.latest_date)}`;
+    const pending = fetchGzipJson(url).catch(error => {
+      cache.delete(key);
+      throw error;
+    });
+    cache.set(key, pending);
+  }
+  return cache.get(key);
+}
+
 let focusPeakMachineScope = null;
 
 function renderDetailSummary(row, options = {}) {
@@ -1300,7 +1321,12 @@ async function openDetail(id, options = {}) {
   if (!detailAvailable()) return;
   const token = ++requestVersion;
   detailData = null;
-  detailBundle = null;
+  detailContext = {
+    dataCenterId: row.data_center_id,
+    date: selectedDate,
+    warehouseId: row.warehouse_id,
+    hour: Number(row.hour),
+  };
   powerLimitFilter = "all";
   detailPowerLimitW = configuredPowerLimit(warehouse);
   focusPeakMachineScope = options.dailyMachinePeak
@@ -1319,18 +1345,14 @@ async function openDetail(id, options = {}) {
   $("detail-search").value = "";
   $("detail").showModal();
   $("detail-content").innerHTML = "<p>正在读取矿箱明细…</p>";
-  const key = `${row.data_center_id}/${compactDate(selectedDate)}/${row.warehouse_id}`;
   try {
-    if (!detailCache.has(key)) {
-      detailCache.set(key, fetchGzipJson(
-        `data/details/${row.data_center_id}/${compactDate(selectedDate)}/${row.warehouse_id}.json.gz?v=${encodeURIComponent(catalog.exported_at || catalog.latest_date)}`
-      ));
-    }
-    const payload = await detailCache.get(key);
-    if (token !== requestVersion) return;
-    detailBundle = payload;
     if (options.dailyMachinePeak) {
-      const dayPeak = dailyMachinePeak(payload);
+      const [summaryPayload, machinePayload] = await Promise.all([
+        fetchDetailPackage("summary", detailContext),
+        fetchDetailPackage("machines", detailContext),
+      ]);
+      if (token !== requestVersion) return;
+      const dayPeak = dailyMachinePeak(machinePayload);
       if (!dayPeak) throw Error("当日没有可用的矿机功率数据");
       const peakHourData = dayData?.hour === dayPeak.hour
         ? dayData
@@ -1349,19 +1371,77 @@ async function openDetail(id, options = {}) {
       } else {
         row = { ...row, hour: dayPeak.hour };
       }
+      detailContext.hour = dayPeak.hour;
       renderDetailSummary(row, options);
-      detailData = payload.hours[String(dayPeak.hour)];
+      const summaryData = summaryPayload.hours[String(dayPeak.hour)];
+      const machineData = machinePayload.hours[String(dayPeak.hour)];
+      if (!summaryData || !machineData) throw Error("该小时没有明细");
+      detailData = {
+        ...summaryData,
+        machine_rows: machineData.machine_rows,
+      };
     } else {
-      detailData = payload.hours[String(row.hour)];
+      const summaryPayload = await fetchDetailPackage("summary", detailContext);
+      if (token !== requestVersion) return;
+      detailData = summaryPayload.hours[String(row.hour)];
+      if (!detailData) throw Error("该小时没有明细");
+      if (focusPeakMachineScope === "hour") {
+        const machinePayload = await fetchDetailPackage(
+          "machines", detailContext,
+        );
+        if (token !== requestVersion) return;
+        const machineData = machinePayload.hours[String(row.hour)];
+        detailData = {
+          ...detailData,
+          machine_rows: machineData?.machine_rows,
+        };
+      }
     }
     if (!detailData) throw Error("该小时没有明细");
     renderDetail();
   } catch (error) {
-    detailCache.delete(key);
     if (token === requestVersion) {
       $("detail-content").innerHTML = `<p class="error">${esc(error.message || "明细读取失败")}</p>`;
     }
   }
+}
+
+async function ensureMachineRows() {
+  if (!detailData || !detailContext) return false;
+  if (Array.isArray(detailData.machine_rows)) return true;
+  const token = requestVersion;
+  $("detail-content").innerHTML = "<p>正在读取矿机明细…</p>";
+  $("power-limit-panel").innerHTML = "";
+  $("detail-focus").innerHTML = "";
+  try {
+    const payload = await fetchDetailPackage("machines", detailContext);
+    if (token !== requestVersion) return false;
+    const machineData = payload.hours[String(detailContext.hour)];
+    if (!machineData) throw Error("该小时没有矿机明细");
+    detailData = {
+      ...detailData,
+      machine_rows: machineData.machine_rows,
+    };
+    return true;
+  } catch (error) {
+    if (token === requestVersion) {
+      $("detail-content").innerHTML = `<p class="error">${esc(error.message || "矿机明细读取失败")}</p>`;
+    }
+    return false;
+  }
+}
+
+function primeDetail(id) {
+  if (!detailAvailable()) return;
+  const row = currentRows.find(item => item.warehouse_id === id);
+  if (!row) return;
+  const context = {
+    dataCenterId: row.data_center_id,
+    date: selectedDate,
+    warehouseId: row.warehouse_id,
+    hour: Number(row.hour),
+  };
+  fetchDetailPackage("summary", context).catch(() => {});
 }
 
 async function revealPeakHour(id) {
@@ -1377,7 +1457,7 @@ async function revealDailyMachinePeak(id) {
 
 function renderPowerLimitPanel() {
   const panel = $("power-limit-panel");
-  if (level !== "machine_rows" || !detailData) {
+  if (level !== "machine_rows" || !Array.isArray(detailData?.machine_rows)) {
     panel.innerHTML = "";
     return;
   }
@@ -1554,6 +1634,23 @@ $("cards").onclick = event => {
   const button = event.target.closest("[data-detail-id]");
   if (button) openDetail(button.dataset.detailId);
 };
+$("cards").addEventListener("pointerover", event => {
+  if (event.relatedTarget && event.currentTarget.contains(event.relatedTarget)) {
+    return;
+  }
+  const button = event.target.closest("[data-detail-id]");
+  if (button && !button.dataset.prefetched) {
+    button.dataset.prefetched = "true";
+    primeDetail(button.dataset.detailId);
+  }
+});
+$("cards").addEventListener("focusin", event => {
+  const button = event.target.closest("[data-detail-id]");
+  if (button && !button.dataset.prefetched) {
+    button.dataset.prefetched = "true";
+    primeDetail(button.dataset.detailId);
+  }
+});
 $("close").onclick = () => { $("detail").close(); requestVersion++; };
 $("detail").addEventListener("cancel", () => requestVersion++);
 $("distribution-close").onclick = () => $("distribution").close();
@@ -1570,7 +1667,19 @@ $("distribution-detail").onclick = () => {
   openDetail(id);
 };
 document.querySelectorAll("[data-level]").forEach(button => {
-  button.onclick = () => { level = button.dataset.level; renderDetail(); };
+  button.onclick = async () => {
+    const nextLevel = button.dataset.level;
+    if (nextLevel === "machine_rows" && !Array.isArray(detailData?.machine_rows)) {
+      level = nextLevel;
+      document.querySelectorAll("[data-level]").forEach(item =>
+        item.setAttribute("aria-selected", item === button));
+      const loaded = await ensureMachineRows();
+      if (loaded) renderDetail();
+      return;
+    }
+    level = nextLevel;
+    renderDetail();
+  };
 });
 $("power-limit-panel").onclick = event => {
   const button = event.target.closest("[data-power-limit]");
