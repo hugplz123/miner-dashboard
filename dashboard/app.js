@@ -1,6 +1,11 @@
 const $ = id => document.getElementById(id);
 const fmt = (n, digits = 1) => n == null || !Number.isFinite(n)
   ? "—" : n.toLocaleString("zh-CN", { maximumFractionDigits: digits });
+const fmtRatio = n => n == null || !Number.isFinite(Number(n))
+  ? "—" : Number(n).toLocaleString("zh-CN", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
 const esc = value => String(value ?? "").replace(/[&<>"']/g, c => ({
   "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
 }[c]));
@@ -441,7 +446,8 @@ function renderCoverage(daily, site, lark) {
   const { completeWarehouses, totalWarehouses } = coverageParts(daily, site);
   const partialWarehouses = daily?.incomplete_warehouse_count || 0;
   const minimumHours = daily?.min_warehouse_hours;
-  const complete = observed === expected && partialWarehouses === 0;
+  const complete = daily?.is_fully_complete
+    ?? (observed === expected && partialWarehouses === 0);
   const details = [
     `${selectedDate} 场地 ${coverageLabel(observed, expected)}有数据，${completeWarehouses}/${totalWarehouses} 个矿箱完整。`,
   ];
@@ -605,7 +611,7 @@ function cardHTML(row) {
     <div class="card-glance">
       <div class="glance-item">
         <span>功耗比</span>
-        <strong>${fmt(row.power_ratio_overall_w_per_th)}<small>W/TH</small></strong>
+        <strong>${fmtRatio(row.power_ratio_overall_w_per_th)}<small>W/TH</small></strong>
       </div>
       <div class="glance-item">
         <span>运行矿机</span>
@@ -698,7 +704,7 @@ function render() {
         `当前小时 ${String(hour).slice(-2)}:00`, "hour-coverage",
       )}
       ${overviewSupportMetric(
-        "样本整体功耗比", fmt(ratio(currentRows)), "W/TH",
+        "样本整体功耗比", fmtRatio(ratio(currentRows)), "W/TH",
         `${fmt(machineCount, 0)} 台 · 有效样本 ${validSamples}`, "ratio",
       )}
     </div>`;
@@ -929,14 +935,14 @@ function renderTrend() {
     $("trend-summary").innerHTML = `
       <span class="trend-stat current">
         <span class="trend-stat-label">${currentLabel}</span>
-        <span class="trend-stat-value">${fmt(selected?.ratio)}</span>
+        <span class="trend-stat-value">${fmtRatio(selected?.ratio)}</span>
         <span class="trend-stat-unit">W/TH</span>
         <span class="trend-stat-context">${esc(selected?.label || "")}${esc(selectedCoverage)}</span>
       </span>
       <span class="trend-stat-separator" aria-hidden="true"></span>
       <span class="trend-stat">
         <span class="trend-stat-label">${averageLabel}</span>
-        <span class="trend-stat-value">${fmt(average)}</span>
+        <span class="trend-stat-value">${fmtRatio(average)}</span>
         <span class="trend-stat-unit">W/TH</span>
       </span>`;
   }
@@ -969,7 +975,7 @@ function renderTrend() {
     const value = maxValue - (maxValue - minValue) * index / 3;
     const yPos = pad.top + plotH * index / 3;
     return `<line class="chart-grid" x1="${pad.left}" x2="${width - pad.right}" y1="${yPos}" y2="${yPos}"/>
-      <text class="chart-axis" x="0" y="${yPos + 3}">${fmt(value)}</text>`;
+      <text class="chart-axis" x="0" y="${yPos + 3}">${ratioMode ? fmtRatio(value) : fmt(value)}</text>`;
   }).join("");
   const meanY = ratioMode && finite(average) ? y(average) : null;
   const labelEvery = series.length > 12 ? 4 : 1;
@@ -998,7 +1004,7 @@ function renderTrend() {
       ? ` · ${siteCoverageLabel(detail)}`
       : "";
     const valueText = ratioMode
-      ? `功耗比 ${fmt(item.ratio)} W/TH`
+      ? `功耗比 ${fmtRatio(item.ratio)} W/TH`
       : `实际 ${fmt(item.actualPower)} kW，理论 ${fmt(item.theoreticalPower)} kW，在架 ${fmt(item.mountedPower)} kW`;
     const sampleText = ratioMode
       ? `样本 ${detail.power_ratio_sample_count ?? "—"}/${detail.machine_count ?? "—"}`
@@ -1072,7 +1078,7 @@ function showTooltip(event) {
     tooltip.innerHTML = `<strong>无上报数据</strong><span>${esc(dateText)}<br>该小时没有被矿机小时汇总覆盖</span>`;
   }
   else if (trendState.metric === "ratio") {
-    tooltip.innerHTML = `<strong>${fmt(item.ratio)} W/TH</strong><span>${esc(dateText)}${esc(coverage)}<br>功耗比样本 ${detail.power_ratio_sample_count ?? "—"} / ${detail.machine_count ?? "—"}</span>`;
+    tooltip.innerHTML = `<strong>${fmtRatio(item.ratio)} W/TH</strong><span>${esc(dateText)}${esc(coverage)}<br>功耗比样本 ${detail.power_ratio_sample_count ?? "—"} / ${detail.machine_count ?? "—"}</span>`;
   }
   else {
     tooltip.innerHTML = `<strong>实际 ${fmt(item.actualPower)} kW</strong>
@@ -1205,7 +1211,7 @@ function renderDetailSummary(row, options = {}) {
       "kW",
       "理论 − 实际",
     )
-    + metric("整体功耗比", fmt(row.power_ratio_overall_w_per_th), "W/TH")
+    + metric("整体功耗比", fmtRatio(row.power_ratio_overall_w_per_th), "W/TH")
     + metric(
       "单机理论平均功率",
       fmt(row.lark_power?.unit_theoretical_power_kw, 2),
@@ -1346,7 +1352,7 @@ function renderDetail() {
       </div>
       <div class="peak-machine-power">
         <strong>${fmt(peakMachine.avg_power_w)}<small>W</small></strong>
-        <span>${fmt(peakMachine.avg_hashrate_ths)} TH/s · ${fmt(peakMachine.power_ratio_w_per_th)} W/TH</span>
+        <span>${fmt(peakMachine.avg_hashrate_ths)} TH/s · ${fmtRatio(peakMachine.power_ratio_w_per_th)} W/TH</span>
       </div>
       <div class="peak-machine-context">
         <span>档位 ${esc(peakMachine.work_mode || "未记录")}</span>
@@ -1360,7 +1366,13 @@ function renderDetail() {
   $("detail-content").innerHTML = `<table><thead><tr>${columns.map(([label]) => `<th>${label}</th>`).join("")}</tr></thead><tbody>${rows.map(row => {
     const isPeakMachine = focusPeakMachineScope && level === "machine_rows"
       && peakMachine && row.ip === peakMachine.ip;
-    return `<tr class="${isPeakMachine ? "peak-machine-row" : ""}">${columns.map(([, key]) => `<td>${esc(key.includes("rejected") ? percent(row[key]) : typeof row[key] === "number" ? fmt(row[key]) : row[key] ?? "未记录")}</td>`).join("")}</tr>`;
+    return `<tr class="${isPeakMachine ? "peak-machine-row" : ""}">${columns.map(([, key]) => {
+      const value = key.includes("rejected") ? percent(row[key])
+        : key.includes("power_ratio") ? fmtRatio(row[key])
+          : typeof row[key] === "number" ? fmt(row[key])
+            : row[key] ?? "未记录";
+      return `<td>${esc(value)}</td>`;
+    }).join("")}</tr>`;
   }).join("")}</tbody></table>${rows.length ? "" : "<p>没有符合条件的明细。</p>"}`;
 }
 

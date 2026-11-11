@@ -575,6 +575,15 @@ async function verifyBrowser(catalog) {
     ));
     assert.equal(await page.locator("#trend .chart-hit").count(), 7);
     assert.equal(await page.locator("#trend .chart-selection").count(), 1);
+    const latestRatio = Number(
+      whiteoak.daily_summary.find(item => item.date === catalog.latest_date)
+        ?.power_ratio_overall_w_per_th
+    );
+    assert(Number.isFinite(latestRatio));
+    const ratioSummary = await page.locator(
+      "#trend-summary .trend-stat.current .trend-stat-value"
+    ).textContent();
+    assert.equal(ratioSummary.trim(), latestRatio.toFixed(2));
     await page.locator("[data-load-filter='below']").click();
     assert(await page.locator(".warehouse-card").count() > 0);
     assert.equal(await page.locator(".warehouse-card[data-load-class='below']")
