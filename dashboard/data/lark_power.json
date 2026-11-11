@@ -4,39 +4,13 @@
   "base_token": "VuLLbn5bNaIWkoswngWlyEOygof",
   "table_id": "tblNq169SbT5aD2N",
   "view_id": "vewUWFcYgO",
-  "snapshot_date": "2026-11-09",
-  "synced_at": "2026-11-10T02:42:47.353018+00:00",
+  "snapshot_date": "2026-11-10",
+  "synced_at": "2026-11-11T01:30:13.527837+00:00",
   "record_count": 96,
   "records": [
     {
       "site": "Blossom01",
       "warehouse_number": 1,
-      "mounted_power_kw": 876.12,
-      "reserved_power_kw": 876.12,
-      "unit_theoretical_power_kw": 3.6505,
-      "power_limit_kw": 1000.0,
-      "mounted_machine_count": 240,
-      "occupied_slots": 240,
-      "total_slots": 240,
-      "vacant_slots": 0,
-      "offline_machine_count": 0
-    },
-    {
-      "site": "Blossom01",
-      "warehouse_number": 2,
-      "mounted_power_kw": 876.12,
-      "reserved_power_kw": 876.12,
-      "unit_theoretical_power_kw": 3.6505,
-      "power_limit_kw": 1000.0,
-      "mounted_machine_count": 240,
-      "occupied_slots": 240,
-      "total_slots": 240,
-      "vacant_slots": 0,
-      "offline_machine_count": 0
-    },
-    {
-      "site": "Blossom01",
-      "warehouse_number": 3,
       "mounted_power_kw": 872.4695,
       "reserved_power_kw": 876.12,
       "unit_theoretical_power_kw": 3.6505,
@@ -46,6 +20,32 @@
       "total_slots": 240,
       "vacant_slots": 0,
       "offline_machine_count": 1
+    },
+    {
+      "site": "Blossom01",
+      "warehouse_number": 2,
+      "mounted_power_kw": 872.4695,
+      "reserved_power_kw": 876.12,
+      "unit_theoretical_power_kw": 3.6505,
+      "power_limit_kw": 1000.0,
+      "mounted_machine_count": 239,
+      "occupied_slots": 240,
+      "total_slots": 240,
+      "vacant_slots": 0,
+      "offline_machine_count": 1
+    },
+    {
+      "site": "Blossom01",
+      "warehouse_number": 3,
+      "mounted_power_kw": 868.819,
+      "reserved_power_kw": 876.12,
+      "unit_theoretical_power_kw": 3.6505,
+      "power_limit_kw": 1000.0,
+      "mounted_machine_count": 238,
+      "occupied_slots": 240,
+      "total_slots": 240,
+      "vacant_slots": 0,
+      "offline_machine_count": 2
     },
     {
       "site": "Blossom01",
@@ -76,15 +76,15 @@
     {
       "site": "Blossom01",
       "warehouse_number": 6,
-      "mounted_power_kw": 872.4695,
+      "mounted_power_kw": 868.819,
       "reserved_power_kw": 876.12,
       "unit_theoretical_power_kw": 3.6505,
       "power_limit_kw": 1000.0,
-      "mounted_machine_count": 239,
+      "mounted_machine_count": 238,
       "occupied_slots": 240,
       "total_slots": 240,
       "vacant_slots": 0,
-      "offline_machine_count": 1
+      "offline_machine_count": 2
     },
     {
       "site": "Blossom01",
@@ -388,15 +388,15 @@
     {
       "site": "Nimrod01",
       "warehouse_number": 8,
-      "mounted_power_kw": 175.740999999999,
+      "mounted_power_kw": 172.859999999999,
       "reserved_power_kw": 270.813999999999,
       "unit_theoretical_power_kw": 2.881,
       "power_limit_kw": 657.0,
-      "mounted_machine_count": 61,
+      "mounted_machine_count": 60,
       "occupied_slots": 94,
       "total_slots": 189,
       "vacant_slots": 95,
-      "offline_machine_count": 33
+      "offline_machine_count": 34
     },
     {
       "site": "Nimrod01",
@@ -518,15 +518,15 @@
     {
       "site": "Nimrod01",
       "warehouse_number": 18,
-      "mounted_power_kw": 888.1152,
+      "mounted_power_kw": 884.352,
       "reserved_power_kw": 918.2208,
       "unit_theoretical_power_kw": 3.7632,
       "power_limit_kw": 980.0,
-      "mounted_machine_count": 236,
+      "mounted_machine_count": 235,
       "occupied_slots": 244,
       "total_slots": 270,
       "vacant_slots": 26,
-      "offline_machine_count": 8
+      "offline_machine_count": 9
     },
     {
       "site": "Nimrod02",
@@ -752,28 +752,28 @@
     {
       "site": "WhiteOak01",
       "warehouse_number": 2,
-      "mounted_power_kw": 927.866571428571,
+      "mounted_power_kw": 924.430028571428,
       "reserved_power_kw": 948.485828571428,
       "unit_theoretical_power_kw": 3.43654285714285,
       "power_limit_kw": 1000.0,
-      "mounted_machine_count": 270,
+      "mounted_machine_count": 269,
       "occupied_slots": 276,
       "total_slots": 276,
       "vacant_slots": 0,
-      "offline_machine_count": 6
+      "offline_machine_count": 7
     },
     {
       "site": "WhiteOak01",
       "warehouse_number": 3,
-      "mounted_power_kw": 927.866571428571,
+      "mounted_power_kw": 924.430028571428,
       "reserved_power_kw": 948.485828571428,
       "unit_theoretical_power_kw": 3.43654285714285,
       "power_limit_kw": 1000.0,
-      "mounted_machine_count": 270,
+      "mounted_machine_count": 269,
       "occupied_slots": 276,
       "total_slots": 276,
       "vacant_slots": 0,
-      "offline_machine_count": 6
+      "offline_machine_count": 7
     },
     {
       "site": "WhiteOak01",
@@ -830,15 +830,15 @@
     {
       "site": "WhiteOak01",
       "warehouse_number": 8,
-      "mounted_power_kw": 814.242,
+      "mounted_power_kw": 810.524,
       "reserved_power_kw": 925.782,
       "unit_theoretical_power_kw": 3.718,
       "power_limit_kw": 1000.0,
-      "mounted_machine_count": 219,
+      "mounted_machine_count": 218,
       "occupied_slots": 249,
       "total_slots": 249,
       "vacant_slots": 0,
-      "offline_machine_count": 30
+      "offline_machine_count": 31
     },
     {
       "site": "WhiteOak01",
@@ -895,15 +895,15 @@
     {
       "site": "WhiteOak01",
       "warehouse_number": 13,
-      "mounted_power_kw": 893.501142857142,
+      "mounted_power_kw": 886.628057142857,
       "reserved_power_kw": 927.866571428571,
       "unit_theoretical_power_kw": 3.43654285714285,
       "power_limit_kw": 1000.0,
-      "mounted_machine_count": 260,
+      "mounted_machine_count": 258,
       "occupied_slots": 270,
       "total_slots": 270,
       "vacant_slots": 0,
-      "offline_machine_count": 10
+      "offline_machine_count": 12
     },
     {
       "site": "WhiteOak01",
@@ -921,15 +921,15 @@
     {
       "site": "WhiteOak01",
       "warehouse_number": 15,
-      "mounted_power_kw": 927.866571428571,
+      "mounted_power_kw": 924.430028571428,
       "reserved_power_kw": 948.485828571428,
       "unit_theoretical_power_kw": 3.43654285714285,
       "power_limit_kw": 1000.0,
-      "mounted_machine_count": 270,
+      "mounted_machine_count": 269,
       "occupied_slots": 276,
       "total_slots": 276,
       "vacant_slots": 0,
-      "offline_machine_count": 6
+      "offline_machine_count": 7
     },
     {
       "site": "WhiteOak01",
@@ -999,15 +999,15 @@
     {
       "site": "WhiteOak01",
       "warehouse_number": 21,
-      "mounted_power_kw": 918.485999999999,
+      "mounted_power_kw": 915.084199999999,
       "reserved_power_kw": 938.896799999999,
       "unit_theoretical_power_kw": 3.40179999999999,
       "power_limit_kw": 1000.0,
-      "mounted_machine_count": 270,
+      "mounted_machine_count": 269,
       "occupied_slots": 276,
       "total_slots": 276,
       "vacant_slots": 0,
-      "offline_machine_count": 6
+      "offline_machine_count": 7
     },
     {
       "site": "WhiteOak01",
@@ -1051,15 +1051,15 @@
     {
       "site": "WhiteOak01",
       "warehouse_number": 25,
-      "mounted_power_kw": 866.278399999999,
+      "mounted_power_kw": 862.771199999999,
       "reserved_power_kw": 897.843199999999,
       "unit_theoretical_power_kw": 3.50719999999999,
       "power_limit_kw": 1000.0,
-      "mounted_machine_count": 247,
+      "mounted_machine_count": 246,
       "occupied_slots": 256,
       "total_slots": 276,
       "vacant_slots": 20,
-      "offline_machine_count": 9
+      "offline_machine_count": 10
     },
     {
       "site": "WhiteOak01",
@@ -1077,15 +1077,15 @@
     {
       "site": "WhiteOak01",
       "warehouse_number": 27,
-      "mounted_power_kw": 904.8788,
+      "mounted_power_kw": 901.477,
       "reserved_power_kw": 938.896799999999,
       "unit_theoretical_power_kw": 3.40179999999999,
       "power_limit_kw": 1000.0,
-      "mounted_machine_count": 266,
+      "mounted_machine_count": 265,
       "occupied_slots": 276,
       "total_slots": 276,
       "vacant_slots": 0,
-      "offline_machine_count": 10
+      "offline_machine_count": 11
     },
     {
       "site": "WhiteOak01",
@@ -1194,28 +1194,28 @@
     {
       "site": "WhiteOak01",
       "warehouse_number": 36,
-      "mounted_power_kw": 854.376,
+      "mounted_power_kw": 850.8161,
       "reserved_power_kw": 872.1755,
       "unit_theoretical_power_kw": 3.5599,
       "power_limit_kw": 1000.0,
-      "mounted_machine_count": 240,
+      "mounted_machine_count": 239,
       "occupied_slots": 245,
       "total_slots": 268,
       "vacant_slots": 23,
-      "offline_machine_count": 5
+      "offline_machine_count": 6
     },
     {
       "site": "WhiteOak01",
       "warehouse_number": 37,
-      "mounted_power_kw": 973.215,
+      "mounted_power_kw": 969.57,
       "reserved_power_kw": 984.15,
       "unit_theoretical_power_kw": 3.645,
       "power_limit_kw": 1000.0,
-      "mounted_machine_count": 267,
+      "mounted_machine_count": 266,
       "occupied_slots": 270,
       "total_slots": 270,
       "vacant_slots": 0,
-      "offline_machine_count": 3
+      "offline_machine_count": 4
     },
     {
       "site": "WhiteOak01",
@@ -1233,15 +1233,15 @@
     {
       "site": "WhiteOak01",
       "warehouse_number": 39,
-      "mounted_power_kw": 965.925,
+      "mounted_power_kw": 962.28,
       "reserved_power_kw": 980.505,
       "unit_theoretical_power_kw": 3.645,
       "power_limit_kw": 1000.0,
-      "mounted_machine_count": 265,
+      "mounted_machine_count": 264,
       "occupied_slots": 269,
       "total_slots": 270,
       "vacant_slots": 1,
-      "offline_machine_count": 4
+      "offline_machine_count": 5
     },
     {
       "site": "WhiteOak01",
