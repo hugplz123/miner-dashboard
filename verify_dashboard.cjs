@@ -624,11 +624,6 @@ async function verifyBrowser(catalog) {
     const latestDayRows = readGzipJson(path.join(
       DATA, "days", `${catalog.latest_date.replaceAll("-", "")}.json.gz`,
     )).warehouse_rows;
-    const whiteoakActiveIds = new Set(
-      latestDayRows
-        .filter(row => row.data_center_id === whiteoak.data_center_id)
-        .map(row => row.warehouse_id),
-    );
     const larkSnapshotDate = catalog.lark_power.latest_snapshot_date;
     assert.equal(larkSnapshotDate, catalog.latest_date);
     assert.equal(await page.locator("#site").inputValue(),
@@ -638,6 +633,15 @@ async function verifyBrowser(catalog) {
     assert.equal(await page.locator("#date option").count(), 7);
     assert.equal(await page.locator(".warehouse-card").count(),
       whiteoak.warehouse_count);
+    const selectedHour = Number(await page.locator("#hour").inputValue());
+    const whiteoakActiveIds = new Set(
+      latestDayRows
+        .filter(row =>
+          row.data_center_id === whiteoak.data_center_id
+          && row.hour === selectedHour
+        )
+        .map(row => row.warehouse_id),
+    );
     assert.equal(await page.locator(".warehouse-card.missing-card").count(),
       whiteoak.warehouse_count - whiteoakActiveIds.size);
     assert.equal(await page.locator("#metrics .overview-stat").count(), 3);
@@ -685,7 +689,6 @@ async function verifyBrowser(catalog) {
     assert(await page.locator(
       ".warehouse-card [data-distribution-id]:not([disabled])",
     ).count() > 0);
-    const selectedHour = Number(await page.locator("#hour").inputValue());
     const selectedRows = new Map(
       latestDayRows
         .filter(row =>

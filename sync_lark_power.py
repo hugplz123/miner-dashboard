@@ -86,6 +86,28 @@ def retryable_lark_error(payload, detail):
     )
 
 
+def retryable_cli_failure(detail):
+    message = str(detail or "").lower()
+    return any(
+        marker in message
+        for marker in (
+            "timed out",
+            "timeout",
+            "econnreset",
+            "etimedout",
+            "socket hang up",
+            "fetch failed",
+            "network error",
+            "temporarily unavailable",
+            "http 429",
+            "http 500",
+            "http 502",
+            "http 503",
+            "http 504",
+        )
+    )
+
+
 def request_page(
     command,
     profile,
@@ -114,12 +136,18 @@ def request_page(
         try:
             payload = json.loads(process.stdout)
         except json.JSONDecodeError as exc:
-            if attempt < retries and process.returncode == 0:
+            if attempt < retries and (
+                process.returncode == 0 or retryable_cli_failure(detail)
+            ):
                 delay = retry_base_delay * (2 ** attempt)
                 delay *= 1 + random.uniform(0, 0.2)
                 time.sleep(delay)
                 continue
-            raise RuntimeError("Lark CLI did not return valid JSON") from exc
+            message = detail[:2000] or "stdout was empty"
+            raise RuntimeError(
+                "Lark CLI did not return valid JSON "
+                f"(exit code {process.returncode}): {message}"
+            ) from exc
 
         if process.returncode == 0 and payload.get("ok"):
             return payload
