@@ -1128,35 +1128,36 @@ async function verifyBrowser(catalog) {
     assert((await page.locator("#trend-title").textContent()).includes(
       "矿箱功率趋势"
     ));
-    assert((await page.locator("#trend-title").textContent()).includes(
+    assert(!(await page.locator("#trend-title").textContent()).includes(
       "占理论功率比例"
     ));
     assert.equal(await page.locator("#trend .chart-line.actual").count(), 1);
-    assert.equal(await page.locator("#trend .chart-line.theory").count(), 1);
+    assert.equal(await page.locator("#trend .chart-line.theory").count(), 0);
     assert.equal(
       await page.locator("#trend .chart-theory-reference").count(),
       1,
     );
-    assert(
-      await page.locator(
-        "#trend .chart-line.mounted, #trend .chart-series-point.mounted"
-      ).count() > 0,
+    assert.equal(await page.locator("#trend .chart-line.mounted").count(), 0);
+    assert.equal(
+      await page.locator("#trend .chart-series-point.mounted").count(),
+      2,
     );
-    assert(await page.evaluate(() => {
+    const mountedValues = await page.evaluate(() => {
       const mounted = trendState.definitions.find(item => item.key === "mounted");
-      return trendState.series
-        .map(item => chartNumber(mounted, item))
-        .some(value => value != null);
-    }));
-    assert.equal(await page.locator("#trend-summary .trend-legend > span").count(), 4);
-    assert((await page.locator("#trend-meta").textContent()).includes(
-      "100% 为矿箱理论功率"
-    ));
+      return trendState.series.map(item => chartNumber(mounted, item));
+    });
+    assert.equal(mountedValues.filter(value => value != null).length, 2);
+    assert(mountedValues.some(value => value == null));
+    assert.equal(await page.locator("#trend-summary .trend-stat").count(), 4);
+    assert.equal(await page.locator("#trend-summary .trend-legend").count(), 0);
+    assert((await page.locator("#trend-meta").textContent()).includes("kW"));
+    assert(!(await page.locator("#trend-meta").textContent()).includes("%"));
     assert(await page.evaluate(() => trendState.minValue > 0));
     const powerAxisLabels = await page.locator("#trend .chart-axis")
       .allTextContents();
     assert(powerAxisLabels.length > 0);
-    assert(powerAxisLabels.every(label => label.includes("%")));
+    assert(powerAxisLabels.every(label => label.includes("kW")));
+    assert(powerAxisLabels.every(label => !label.includes("%")));
     const powerChartValues = await page.evaluate(() => {
       const actual = trendState.definitions.find(item => item.key === "actual");
       return trendState.series
@@ -1165,7 +1166,7 @@ async function verifyBrowser(catalog) {
     });
     assert(powerChartValues.length > 0);
     assert(powerChartValues.every(value =>
-      value > 0 && value < 200
+      value > 1000 && value < 100000
     ));
     await page.locator("#trend .chart-hit").last().hover();
     assert.equal(
@@ -1173,8 +1174,9 @@ async function verifyBrowser(catalog) {
       false,
     );
     const powerTooltipText = await page.locator("#chart-tooltip").textContent();
-    assert(powerTooltipText.includes("% 理论"));
     assert(powerTooltipText.includes("kW"));
+    assert(!powerTooltipText.includes("%"));
+    assert(!powerTooltipText.includes("Lark-OM表在架数据使用"));
     await page.mouse.move(2, 2);
     assert.equal(
       await page.locator("#chart-tooltip").evaluate(element => element.hidden),
@@ -1353,8 +1355,13 @@ async function verifyBrowser(catalog) {
     assert(detailMetricsText.includes("单机理论平均功率"));
     assert(detailMetricsText.includes("矿箱理论功率 1,000 kW"));
     assert(detailMetricsText.includes("矿箱小时实际功率"));
-    assert(!(await page.locator("#detail-capacity .lark-panel-foot")
-      .textContent()).includes("单机理论平均"));
+    const capacityNotes = await page.locator(
+      "#detail-capacity .capacity-row .capacity-note",
+    ).allTextContents();
+    assert.equal(capacityNotes.length, 2);
+    assert(capacityNotes[0].includes("在架"));
+    assert(capacityNotes[1].includes("占位"));
+    assert(!capacityNotes.join(" ").includes("单机理论平均"));
     await page.locator("#close").click();
 
     await primaryDetailButton.click();

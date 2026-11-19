@@ -231,6 +231,7 @@ def run(config, end_date, days, summary_root, detail_root, destination,
         days=days,
         end_date=latest_key,
         detail_root=detail_root,
+        theoretical_power_path=theoretical_power,
     )
     clear_other_directories(summary_root, date_keys)
     clear_other_directories(detail_root, date_keys)
@@ -243,8 +244,8 @@ def main():
         help="End date YYYYMMDD; defaults to yesterday in the configured timezone",
     )
     parser.add_argument(
-        "--timezone-offset-hours", type=int, default=8,
-        help="Timezone used to determine yesterday; default UTC+8",
+        "--timezone-offset-hours", type=int, default=0,
+        help="Timezone used to determine yesterday; default UTC+0",
     )
     parser.add_argument("--days", type=int, default=7)
     parser.add_argument(

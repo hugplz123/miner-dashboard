@@ -753,12 +753,22 @@ function larkPanelHTML(row) {
   const status = presentFields === capacityFields.length
     ? "已匹配" : presentFields ? "部分缺失" : "字段缺失";
   const theory = row.theoretical_power_kw;
-  const capacityRow = (label, value) => {
+  const capacityRow = (label, value, note) => {
+    const noteHTML = note
+      ? `<div class="capacity-note">${esc(note)}</div>`
+      : "";
     if (!finite(value)) {
-      return `<div class="capacity-row missing"><span>${label}</span><strong>容量字段缺失</strong></div>`;
+      return `<div class="capacity-row missing">
+        <span>${label}</span><strong>容量字段缺失</strong>
+        ${noteHTML}
+      </div>`;
     }
     if (!finite(theory) || Number(theory) <= 0) {
-      return `<div class="capacity-row"><span>${label}</span><strong>${fmt(value)}<small>kW</small></strong><em>缺少矿箱理论功率</em></div>`;
+      return `<div class="capacity-row">
+        <span>${label}</span><strong>${fmt(value)}<small>kW</small></strong>
+        <em>缺少矿箱理论功率</em>
+        ${noteHTML}
+      </div>`;
     }
     const width = Math.max(0, Math.min(100, Number(value) / Number(theory) * 100));
     const margin = Number(theory) - Number(value);
@@ -774,6 +784,7 @@ function larkPanelHTML(row) {
       <div class="capacity-track" title="${label} ${fmt(value)} kW，矿箱理论功率 ${fmt(theory)} kW">
         <i style="width:${width}%"></i>
       </div>
+      ${noteHTML}
     </div>`;
   };
   return `<div class="lark-power-panel">
@@ -782,11 +793,16 @@ function larkPanelHTML(row) {
       <b>${status}</b>
     </div>
     <div class="capacity-grid">
-      ${capacityRow("Lark-OM表在架功率", lark.mounted_power_kw)}
-      ${capacityRow("Lark-OM表占位功率", lark.reserved_power_kw)}
-    </div>
-    <div class="lark-panel-foot">
-      <span>Lark-OM表在架 ${lark.mounted_machine_count ?? "—"} 台 · Lark-OM表占位 ${lark.occupied_slots ?? "—"}/${lark.total_slots ?? "—"} 个槽位</span>
+      ${capacityRow(
+        "Lark-OM表在架功率",
+        lark.mounted_power_kw,
+        `在架 ${lark.mounted_machine_count ?? "—"} 台`,
+      )}
+      ${capacityRow(
+        "Lark-OM表占位功率",
+        lark.reserved_power_kw,
+        `占位 ${lark.occupied_slots ?? "—"}/${lark.total_slots ?? "—"} 个槽位`,
+      )}
     </div>
   </div>`;
 }
@@ -1068,7 +1084,7 @@ function render() {
   $("brand-name").textContent = site.data_center_name;
   const trendLabel = trendMetric === "ratio"
     ? "矿箱整体功耗比趋势"
-    : "矿箱功率趋势 · 占理论功率比例";
+    : "矿箱功率趋势";
   $("trend-title").textContent = `${site.data_center_name} ${trendLabel}`;
   $("trend").setAttribute("aria-label", `${site.data_center_name} ${trendLabel}`);
   const warehouseCoverage = `${activeWarehouseCount} 个矿箱`;
@@ -1268,15 +1284,6 @@ function trendNumber(definition, item) {
   return value == null || !Number.isFinite(Number(value)) ? null : Number(value);
 }
 
-function percentOfTheory(value, theory) {
-  const current = Number(value);
-  const base = Number(theory);
-  if (!Number.isFinite(current) || !Number.isFinite(base) || base <= 0) {
-    return null;
-  }
-  return current / base * 100;
-}
-
 function chartNumber(definition, item) {
   const value = definition.chartValue
     ? definition.chartValue(item)
@@ -1328,9 +1335,7 @@ function renderTrend() {
           className: "actual",
           unit: "kW",
           value: item => item.actualPower,
-          chartValue: item => percentOfTheory(
-            item.actualPower, item.theoreticalPower,
-          ),
+          chartValue: item => item.actualPower,
           primary: true,
           area: true,
         },
@@ -1340,9 +1345,7 @@ function renderTrend() {
           className: "meter",
           unit: "kW",
           value: item => item.meterPower,
-          chartValue: item => percentOfTheory(
-            item.meterPower, item.theoreticalPower,
-          ),
+          chartValue: item => item.meterPower,
         },
         {
           key: "theory",
@@ -1350,7 +1353,8 @@ function renderTrend() {
           className: "theory",
           unit: "kW",
           value: item => item.theoreticalPower,
-          chartValue: item => item.theoreticalPower == null ? null : 100,
+          chartValue: item => item.theoreticalPower,
+          reference: true,
         },
         {
           key: "mounted",
@@ -1358,14 +1362,12 @@ function renderTrend() {
           className: "mounted",
           unit: "kW",
           value: item => item.mountedPower,
-          chartValue: item => percentOfTheory(
-            item.mountedPower, item.theoreticalPower,
-          ),
+          chartValue: item => item.mountedPower,
         },
       ];
   const primary = definitions.find(definition => definition.primary);
   const titleLabel = trendMetric === "ratio"
-    ? "矿箱整体功耗比趋势" : "矿箱功率趋势 · 占理论功率比例";
+    ? "矿箱整体功耗比趋势" : "矿箱功率趋势";
   $("trend-title").textContent = `${currentSite().data_center_name} ${titleLabel}`;
   $("trend").setAttribute(
     "aria-label",
@@ -1381,8 +1383,8 @@ function renderTrend() {
   }
   else {
     $("trend-meta").textContent = trendMode === "daily"
-      ? `占矿箱理论功率 · % · 非零功率局部放大 · 100% 为矿箱理论功率 · 数据时区 ${DATA_TIMEZONE}${incompleteDays ? " · * 存在小时或矿箱缺口" : ""}`
-      : `占矿箱理论功率 · % · 非零功率局部放大 · 100% 为矿箱理论功率 · 数据时区 ${DATA_TIMEZONE} · Lark-OM表使用当日快照 · 灰色带为数据缺失小时`;
+      ? `矿箱功率 · kW · 数据时区 ${DATA_TIMEZONE}${incompleteDays ? " · * 存在小时或矿箱缺口" : ""}`
+      : `矿箱功率 · kW · 数据时区 ${DATA_TIMEZONE} · 当日覆盖 ${coverageLabel(hours.length)} · 灰色带为数据缺失小时`;
   }
   const selectedKey = trendMode === "daily" ? selectedDate : String($("hour").value);
   const allValues = definitions.flatMap(definition =>
@@ -1451,44 +1453,36 @@ function renderTrend() {
       </span>`;
   }
   else {
-    const currentActualLabel = trendMode === "daily"
-      ? "当前日期矿箱平均小时实际功率"
-      : "当前小时矿箱实际功率";
     $("trend-summary").innerHTML = `
       <span class="trend-stat current">
-        <span class="trend-stat-label">${currentActualLabel}</span>
+        <span class="trend-stat-label">实际</span>
         <span class="trend-stat-value">${fmt(selected?.actualPower)}</span>
         <span class="trend-stat-unit">kW</span>
-        <span class="trend-stat-context">${esc(selected?.label || "")}${esc(selectedCoverage)}</span>
       </span>
       <span class="trend-stat-separator" aria-hidden="true"></span>
       <span class="trend-stat">
-        <span class="trend-stat-label">矿箱电表小时实测功率</span>
+        <span class="trend-stat-label">电表</span>
         <span class="trend-stat-value">${fmt(selected?.meterPower)}</span>
         <span class="trend-stat-unit">kW</span>
       </span>
+      <span class="trend-stat-separator" aria-hidden="true"></span>
       <span class="trend-stat">
-        <span class="trend-stat-label">同期矿箱理论功率</span>
+        <span class="trend-stat-label">理论</span>
         <span class="trend-stat-value">${fmt(selected?.theoreticalPower)}</span>
         <span class="trend-stat-unit">kW</span>
       </span>
+      <span class="trend-stat-separator" aria-hidden="true"></span>
       <span class="trend-stat">
-        <span class="trend-stat-label">Lark-OM表在架功率</span>
+        <span class="trend-stat-label">在架</span>
         <span class="trend-stat-value">${fmt(selected?.mountedPower)}</span>
         <span class="trend-stat-unit">kW</span>
-      </span>
-      <span class="trend-legend" aria-label="趋势图例">
-        <span><i class="actual"></i>矿箱小时实际功率</span>
-        <span><i class="meter"></i>矿箱电表小时实测功率</span>
-        <span><i class="theory"></i>矿箱理论功率</span>
-        <span><i class="mounted"></i>Lark-OM表在架快照</span>
       </span>`;
   }
   const grid = [0, 1, 2, 3].map(index => {
     const value = maxValue - (maxValue - minValue) * index / 3;
     const yPos = pad.top + plotH * index / 3;
     return `<line class="chart-grid" x1="${pad.left}" x2="${width - pad.right}" y1="${yPos}" y2="${yPos}"/>
-      <text class="chart-axis" x="0" y="${yPos + 3}">${ratioMode ? fmtRatio(value) : `${fmt(value)}%`}</text>`;
+      <text class="chart-axis" x="0" y="${yPos + 3}">${ratioMode ? fmtRatio(value) : `${fmt(value)} kW`}</text>`;
   }).join("");
   const meanY = ratioMode && finite(average) ? y(average) : null;
   const labelEvery = series.length > 12 ? 4 : 1;
@@ -1518,7 +1512,7 @@ function renderTrend() {
       : "";
     const valueText = ratioMode
       ? `矿箱整体功耗比 ${fmtRatio(item.ratio)} W/TH`
-      : `矿箱小时实际功率 ${fmt(item.actualPower)} kW（${fmt(percentOfTheory(item.actualPower, item.theoreticalPower))}% 理论功率），矿箱电表小时实测功率 ${fmt(item.meterPower)} kW（${fmt(percentOfTheory(item.meterPower, item.theoreticalPower))}% 理论功率），矿箱理论功率 ${fmt(item.theoreticalPower)} kW（100%），Lark-OM表在架功率 ${fmt(item.mountedPower)} kW（${fmt(percentOfTheory(item.mountedPower, item.theoreticalPower))}% 理论功率）`;
+      : `矿箱小时实际功率 ${fmt(item.actualPower)} kW，矿箱电表小时实测功率 ${fmt(item.meterPower)} kW，矿箱理论功率 ${fmt(item.theoreticalPower)} kW，Lark-OM表在架功率 ${fmt(item.mountedPower)} kW`;
     const sampleText = ratioMode
       ? `样本 ${detail.power_ratio_sample_count ?? "—"}/${detail.machine_count ?? "—"}`
       : "";
@@ -1531,13 +1525,15 @@ function renderTrend() {
     ? `<circle class="chart-current" cx="${primaryPoints[currentIndex][0]}" cy="${primaryPoints[currentIndex][1]}" r="4.2"/>` : "";
   const selection = currentIndex < 0 ? ""
     : `<line class="chart-selection" x1="${x(currentIndex)}" x2="${x(currentIndex)}" y1="${pad.top}" y2="${pad.top + plotH}"/>`;
-  const theoryReference = !ratioMode && finite(y(100))
+  const referencePower = selected?.theoreticalPower ?? currentSite().theoretical_power_kw;
+  const theoryReference = !ratioMode && finite(referencePower)
     ? `<g class="chart-theory-reference">
-        <line x1="${pad.left}" x2="${width - pad.right}" y1="${y(100)}" y2="${y(100)}"/>
-        <text x="${width - pad.right - 2}" y="${y(100) - 6}" text-anchor="end">矿箱理论功率 100%</text>
+        <line x1="${pad.left}" x2="${width - pad.right}" y1="${y(referencePower)}" y2="${y(referencePower)}"/>
+        <text x="${width - pad.right - 2}" y="${y(referencePower) - 6}" text-anchor="end">矿箱理论功率 ${fmt(referencePower)} kW</text>
       </g>`
     : "";
   const linePaths = definitions.map(definition => {
+    if (definition.reference) return "";
     const points = pointsByDefinition.get(definition.key);
     const segments = chartSegments(points);
     const paths = segments.map(segment =>
@@ -1605,16 +1601,13 @@ function showTooltip(event) {
     tooltip.innerHTML = `<strong>${fmtRatio(item.ratio)} W/TH</strong><span>${esc(dateText)}${esc(coverage)}<br>矿箱整体功耗比样本 ${detail.power_ratio_sample_count ?? "—"} / ${detail.machine_count ?? "—"}</span>`;
   }
   else {
-    const actualPercent = percentOfTheory(item.actualPower, item.theoreticalPower);
-    const meterPercent = percentOfTheory(item.meterPower, item.theoreticalPower);
-    const mountedPercent = percentOfTheory(item.mountedPower, item.theoreticalPower);
-    tooltip.innerHTML = `<strong>矿箱小时实际功率 ${fmt(item.actualPower)} kW <em>${fmt(actualPercent)}% 理论</em></strong>
+    tooltip.innerHTML = `<strong>矿箱小时实际功率 ${fmt(item.actualPower)} kW</strong>
       <div class="tooltip-series">
-        <span><i style="color:#c17722"></i>矿箱电表小时实测功率</span><b>${fmt(item.meterPower)} kW · ${fmt(meterPercent)}%</b>
-        <span><i style="color:#7f8c89"></i>矿箱理论功率</span><b>${fmt(item.theoreticalPower)} kW · 100%</b>
-        <span><i style="color:#477b9d"></i>Lark-OM表在架功率</span><b>${fmt(item.mountedPower)} kW · ${fmt(mountedPercent)}%</b>
+        <span><i style="color:#c17722"></i>电表</span><b>${fmt(item.meterPower)} kW</b>
+        <span><i style="color:#7f8c89"></i>理论</span><b>${fmt(item.theoreticalPower)} kW</b>
+        <span><i style="color:#477b9d"></i>在架</span><b>${finite(item.mountedPower) ? `${fmt(item.mountedPower)} kW` : "暂无"}</b>
       </div>
-      <span>${esc(dateText)}${esc(coverage)}<br>Lark-OM表在架数据使用所选日期当日快照</span>`;
+      <span>${esc(dateText)}${esc(coverage)}</span>`;
   }
   const x = pad.left + (series.length === 1 ? plotW / 2 : plotW * index / (series.length - 1));
   const primaryValue = chartNumber(primary, item)

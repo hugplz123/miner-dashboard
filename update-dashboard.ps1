@@ -51,7 +51,19 @@ if ($Date) {
     }
 }
 else {
-    $snapshotDate = (Get-Date).Date.AddDays(-1).ToString("yyyy-MM-dd")
+    $snapshotDate = [DateTime]::UtcNow.Date.AddDays(-1).ToString("yyyy-MM-dd")
+}
+
+& python sync_lark_model_levels.py
+if ($LASTEXITCODE -ne 0) {
+    $modelLevelSnapshot = "dashboard\data\model_levels.json"
+    if (Test-Path -LiteralPath $modelLevelSnapshot) {
+        Write-Host "Lark model-level sync failed; reusing the local mapping." `
+            -ForegroundColor Yellow
+    }
+    else {
+        throw "Lark model-level sync failed and no local mapping is available."
+    }
 }
 
 & python sync_lark_power.py --snapshot-date $snapshotDate

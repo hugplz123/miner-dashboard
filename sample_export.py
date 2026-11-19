@@ -9,6 +9,14 @@ from decimal import Decimal
 from pathlib import Path
 from xml.etree import ElementTree as ET
 
+from model_levels import (
+    DEFAULT_MODEL_LEVELS_PATH,
+    load_model_level_mapping,
+    normalize_model_name,
+    normalize_api_value,
+    resolve_model_level,
+)
+
 VENDOR_DIR = Path(__file__).resolve().parent.parent / "功耗数据更新" / "vendor"
 if VENDOR_DIR.exists():
     sys.path.insert(0, str(VENDOR_DIR))
@@ -24,6 +32,7 @@ SITES = {
     "Blossom01": "c0449798c6494a49bac60a6d924c9115",
 }
 SOURCE_TEMPERATURE_UNIT = "fahrenheit"
+DATA_TIMEZONE = "UTC+0"
 TEMPERATURE_VALID_MAX = Decimal(250)  # 250 F = 121 C
 HASHRATE_PER_TH = Decimal(10**12)
 QUERY_CHUNK_HOURS = 6
@@ -640,7 +649,7 @@ def write_summary_only_outputs(output_dir, prefix, day, stat_date, site,
         "data_center_name": site,
         "date": day.isoformat(),
         "hour_encoding": "YYYYMMDDHH",
-        "timezone": None,
+        "timezone": DATA_TIMEZONE,
         "units": {
             "hashrate": "TH/s", "power": "W", "warehouse_power": "kW",
             "temperature": "C", "power_ratio": "W/TH",
@@ -695,7 +704,7 @@ def write_summary_only_outputs(output_dir, prefix, day, stat_date, site,
 
 def export(config_path, stat_date, output_dir, reuse=False, site="Nimrod01",
            theoretical_power_path=DEFAULT_THEORETICAL_POWER_PATH,
-           summary_only=False):
+           summary_only=False, model_levels_path=DEFAULT_MODEL_LEVELS_PATH):
     center_id = SITES[site]
     source_table = f"t_machine_worker_hashrate_hour_{center_id}"
     prefix = f"{site.lower()}_{stat_date}"
@@ -704,6 +713,7 @@ def export(config_path, stat_date, output_dir, reuse=False, site="Nimrod01",
     end_hour = int((day + dt.timedelta(days=1)).strftime("%Y%m%d") + "00")
     output_dir.mkdir(parents=True, exist_ok=True)
     theoretical_power = read_theoretical_power(theoretical_power_path)
+    model_levels = load_model_level_mapping(model_levels_path)
     cache_path = output_dir / f"{prefix}_source.json"
     query_columns = FULL_QUERY_COLUMNS
     if reuse:
@@ -853,6 +863,37 @@ def export(config_path, stat_date, output_dir, reuse=False, site="Nimrod01",
 
         row["warehouse_id"] = next(iter(location_ids))
         candidates.append(row)
+
+    model_level_audit = defaultdict(int)
+    unmapped_pairs = defaultdict(int)
+    for row in candidates:
+        raw_model = row.get("model")
+        raw_work_mode = row.get("work_mode")
+        model, level, mapping_status = resolve_model_level(
+            raw_model, raw_work_mode, model_levels
+        )
+        row["model"] = model
+        row["work_mode"] = level
+        row["raw_model"] = raw_model
+        row["raw_work_mode"] = raw_work_mode
+        model_level_audit[mapping_status] += 1
+        if mapping_status != "mapped":
+            pair = (
+                normalize_model_name(raw_model) or "(empty)",
+                normalize_api_value(raw_work_mode) or "(empty)",
+                mapping_status,
+            )
+            unmapped_pairs[pair] += 1
+            anomalies.append({
+                "hour": row["hour"],
+                "ip": row["ip"],
+                "source_id": row.get("id"),
+                "issue": f"model_level_{mapping_status}",
+                "detail": (
+                    f"model={raw_model or '(empty)'}; "
+                    f"api={raw_work_mode or '(empty)'}"
+                ),
+            })
 
     groups = defaultdict(list)
     detail_rows = []
@@ -1046,7 +1087,7 @@ def export(config_path, stat_date, output_dir, reuse=False, site="Nimrod01",
             "data_center_id": center_id, "data_center_name": site,
             "date": day.isoformat(),
             "source_table": source_table,
-            "hour_encoding": "YYYYMMDDHH", "timezone": None,
+            "hour_encoding": "YYYYMMDDHH", "timezone": DATA_TIMEZONE,
             "source_temperature_unit": SOURCE_TEMPERATURE_UNIT,
             "units": {"hashrate": "TH/s", "power": "W", "temperature": "C",
                       "power_ratio": "W/TH", "rejected_rate": "fraction"},
@@ -1074,7 +1115,7 @@ def export(config_path, stat_date, output_dir, reuse=False, site="Nimrod01",
         "data_center_name": site,
         "date": day.isoformat(),
         "hour_encoding": "YYYYMMDDHH",
-        "timezone": None,
+        "timezone": DATA_TIMEZONE,
         "units": {
             "hashrate": "TH/s", "power": "W", "warehouse_power": "kW",
             "temperature": "C", "power_ratio": "W/TH",
@@ -1117,6 +1158,21 @@ def export(config_path, stat_date, output_dir, reuse=False, site="Nimrod01",
         "theoretical_power_matched_rows": sum(
             row["理论功率(kW)"] is not None for row in summary_rows
         ),
+        "model_level_mapping_source": str(Path(model_levels_path).resolve()),
+        "model_level_mapping": {
+            "status_counts": dict(sorted(model_level_audit.items())),
+            "unmapped_pairs": [
+                {
+                    "model": model,
+                    "api_field": api,
+                    "status": status,
+                    "machine_hour_count": count,
+                }
+                for (model, api, status), count in sorted(
+                    unmapped_pairs.items()
+                )
+            ],
+        },
     }
     assert report["summary_machine_count_total"] == machine_hour_count
     (output_dir / f"{prefix}_report.json").write_text(
@@ -1154,6 +1210,11 @@ def main():
         help="XLSX with site, warehouse and theoretical power (kW)",
     )
     parser.add_argument(
+        "--model-levels",
+        default=str(DEFAULT_MODEL_LEVELS_PATH),
+        help="Lark model/API-to-Level mapping JSON",
+    )
+    parser.add_argument(
         "--summary-only", action="store_true",
         help="Write only the lightweight warehouse dashboard and report",
     )
@@ -1164,6 +1225,7 @@ def main():
         export(
             Path(args.config), args.date, Path(args.output_dir), args.reuse, site,
             Path(args.theoretical_power), args.summary_only,
+            Path(args.model_levels),
         )
 
 

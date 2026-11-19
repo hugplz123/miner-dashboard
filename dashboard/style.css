@@ -514,9 +514,9 @@ main.is-loading #metrics, main.is-loading .trend, main.is-loading .warehouse-gri
   background: #5f998a; border-radius: 2px;
 }
 .capacity-row.over .capacity-track i { background: var(--red); }
-.lark-panel-foot {
-  display: flex; justify-content: flex-end; flex-wrap: wrap;
-  gap: 4px 10px; margin-top: 7px; color: #7c8886; font-size: 9px;
+.capacity-note {
+  margin-top: 5px; color: #7c8886; font-size: 9px;
+  line-height: 1.35; font-variant-numeric: tabular-nums;
 }
 
 .card-facts {
@@ -1313,8 +1313,8 @@ tbody tr:hover { background: #f4faf8; }
   height: 7px;
   margin-top: 6px;
 }
-.warehouse-card .lark-panel-foot {
-  margin-top: 8px;
+.warehouse-card .capacity-note {
+  margin-top: 6px;
   font-size: 9px;
 }
 .lark-power-panel.snapshot-missing {
@@ -1668,7 +1668,7 @@ tbody tr:hover { background: #f4faf8; }
 .detail-capacity .capacity-copy > strong small { font-size: 10px; }
 .detail-capacity .capacity-copy > em { font-size: 11px; }
 .detail-capacity .capacity-track { height: 7px; margin-top: 8px; }
-.detail-capacity .lark-panel-foot { font-size: 11px; margin-top: 10px; }
+.detail-capacity .capacity-note { font-size: 11px; margin-top: 8px; }
 .capacity-empty {
   margin: 0;
   padding: 14px;

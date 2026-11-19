@@ -1,6 +1,7 @@
 __pycache__/
 *.py[cod]
 .env
+supabase.local.env
 node_modules/
 output/
 outputs/

@@ -1,4 +1,4 @@
-"""Sync public warehouse power fields from the Lark Bitable snapshot."""
+"""Sync public warehouse power fields from the Lark-OM表 snapshot."""
 import argparse
 import datetime as dt
 import json
@@ -145,7 +145,7 @@ def request_page(
                 continue
             message = detail[:2000] or "stdout was empty"
             raise RuntimeError(
-                "Lark CLI did not return valid JSON "
+                "Lark-OM表 CLI did not return valid JSON "
                 f"(exit code {process.returncode}): {message}"
             ) from exc
 
@@ -156,7 +156,7 @@ def request_page(
             delay = min(60, retry_base_delay * (2 ** attempt))
             delay *= 1 + random.uniform(0, 0.2)
             print(
-                "Lark rate limit reached; retrying in "
+                "Lark-OM表 rate limit reached; retrying in "
                 f"{delay:.1f}s ({attempt + 1}/{retries})",
                 flush=True,
             )
@@ -165,10 +165,10 @@ def request_page(
 
         error = payload.get("error") or payload
         raise RuntimeError(
-            f"Lark API request failed with exit code "
+            f"Lark-OM表 API request failed with exit code "
             f"{process.returncode}: {error}"
         )
-    raise RuntimeError("Lark API request exhausted its retry budget")
+    raise RuntimeError("Lark-OM表 API request exhausted its retry budget")
 
 
 def fetch_records(
@@ -206,7 +206,7 @@ def fetch_records(
             return records
         next_token = data.get("page_token")
         if not next_token or next_token == page_token:
-            raise RuntimeError("Lark pagination stopped without a usable page token")
+            raise RuntimeError("Lark-OM表 pagination stopped without a usable page token")
         page_token = next_token
 
 
@@ -214,7 +214,7 @@ def public_record(item):
     fields = item.get("fields") or {}
     site = str(fields.get("场地") or "").strip()
     if not site:
-        raise ValueError(f"Lark record {item.get('record_id')} has no site")
+        raise ValueError(f"Lark-OM表 record {item.get('record_id')} has no site")
     warehouse_number = normalize_warehouse_number(fields.get("矿箱编号"))
     return {
         "site": site,
@@ -275,7 +275,7 @@ def sync(args):
     for record in records:
         key = (record["site"].casefold(), record["warehouse_number"])
         if key in keys:
-            raise ValueError(f"Duplicate Lark warehouse key: {key}")
+            raise ValueError(f"Duplicate Lark-OM表 warehouse key: {key}")
         keys.add(key)
     records.sort(
         key=lambda record: (
@@ -303,7 +303,7 @@ def sync(args):
     write_json_atomic(history_path, payload)
     sites = sorted({record["site"] for record in records})
     print(
-        f"Synced {len(records)} Lark power records from "
+        f"Synced {len(records)} Lark-OM表 power records from "
         f"{len(sites)} sites for {snapshot_date}; latest={output.resolve()} "
         f"history={history_path.resolve()}"
     )
@@ -320,7 +320,7 @@ def main():
         "--history-dir",
         type=Path,
         default=DEFAULT_HISTORY_DIR,
-        help="Directory for dated Lark snapshots (YYYYMMDD.json)",
+        help="Directory for dated Lark-OM表 snapshots (YYYYMMDD.json)",
     )
     parser.add_argument(
         "--snapshot-date",
@@ -334,7 +334,7 @@ def main():
         "--retries",
         type=int,
         default=6,
-        help="Retries for transient Lark API errors; defaults to 6",
+        help="Retries for transient Lark-OM表 API errors; defaults to 6",
     )
     parser.add_argument(
         "--retry-base-delay",
