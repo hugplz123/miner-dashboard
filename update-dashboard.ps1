@@ -85,6 +85,19 @@ if ($LASTEXITCODE -ne 0) {
     }
 }
 
+$meterEndDate = $snapshotDate.Replace("-", "")
+& python sync_supabase_power.py --end $meterEndDate --days $Days
+if ($LASTEXITCODE -ne 0) {
+    $meterSnapshot = "dashboard\data\supabase_power.json"
+    if (Test-Path -LiteralPath $meterSnapshot) {
+        Write-Host "Supabase meter sync failed; reusing the existing snapshot." `
+            -ForegroundColor Yellow
+    }
+    else {
+        throw "Supabase meter sync failed and no local snapshot is available."
+    }
+}
+
 # Only the newest day is queried; the other days are reused from outputs/.
 $arguments = @("run_rolling.py", "--days", $Days, "--jobs", $Jobs, "--skip-existing")
 if ($Date) {
