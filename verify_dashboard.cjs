@@ -293,7 +293,7 @@ function larkKey(site, warehouseNumber) {
 
 function verifyPublishedData() {
   const catalog = readJson(path.join(DATA, "catalog.json"));
-  assert.equal(catalog.schema_version, "3.5");
+  assert.equal(catalog.schema_version, "3.6");
   assert.equal(catalog.timezone, "UTC+0");
   assert.equal(catalog.date_range.days, 7);
   assert.equal(catalog.available_dates.length, 7);
@@ -648,6 +648,32 @@ function verifyPublishedData() {
       machineRows.length ? sum(machineRows, "actual_power_kw") : null,
       daily.actual_power_kw,
     ));
+    const meterRows = rows.filter(row =>
+      row.meter_data_available && Number.isFinite(row.meter_power_kw)
+    );
+    const meterPowerByHour = new Map();
+    for (const row of meterRows) {
+      meterPowerByHour.set(
+        row.hour,
+        (meterPowerByHour.get(row.hour) || 0) + row.meter_power_kw,
+      );
+    }
+    const expectedMeterPeak = meterPowerByHour.size
+      ? [...meterPowerByHour.entries()]
+        .sort((left, right) =>
+          right[1] - left[1] || left[0] - right[0]
+        )[0]
+      : null;
+    assert.equal(daily.meter_hour_count, meterPowerByHour.size);
+    assert.equal(daily.meter_hours_with_data, meterPowerByHour.size);
+    if (expectedMeterPeak) {
+      assert(close(daily.meter_hour_peak_kw, expectedMeterPeak[1]));
+      assert.equal(daily.meter_hour_peak_hour, expectedMeterPeak[0]);
+    }
+    else {
+      assert.equal(daily.meter_hour_peak_kw, null);
+      assert.equal(daily.meter_hour_peak_hour, null);
+    }
     assert.equal(
       daily.theoretical_power_kw,
       EXPECTED_THEORETICAL_POWER_KW[daily.data_center_name],
@@ -826,6 +852,27 @@ async function verifyBrowser(catalog) {
       whiteoak.warehouse_count);
     assert.equal(await page.locator(".machine-power-metric").count(),
       whiteoak.warehouse_count * 3);
+    const machinePowerLabels = await page.locator(
+      ".warehouse-card .machine-power-metric > span",
+    ).allTextContents();
+    assert.equal(
+      machinePowerLabels.filter(label =>
+        label.includes("矿箱内矿机当日平均功率峰值")
+      ).length,
+      whiteoak.warehouse_count,
+      "每个矿箱都必须使用新的矿箱内矿机当日平均功率峰值名称",
+    );
+    assert(
+      !machinePowerLabels.some(label =>
+        label.includes("单机当日平均功率峰值")
+      ),
+      "不能重新出现旧的单机当日平均功率峰值名称",
+    );
+    await page.locator(".warehouse-card").first().screenshot({
+      path: path.join(
+        ROOT, "outputs", "dashboard-check", "machine-power-labels.png",
+      ),
+    });
     const populatedMachinePowerValues = await page.locator(
       ".warehouse-card:not(.missing-card):not(.meter-only-card) "
         + ".machine-power-metric strong",
@@ -1092,12 +1139,168 @@ async function verifyBrowser(catalog) {
     assert.equal(await page.locator(".warehouse-card .machine-power-metric")
       .count(), whiteoak.warehouse_count * 3);
     assert(await page.locator(".warehouse-card .meter-power-scale").count() > 0);
+    const meterTimeText = await page.locator(
+      ".warehouse-card .meter-power-time",
+    ).first().textContent();
+    assert(meterTimeText.includes("UTC+0"));
+    const meterPanelText = await page.locator(
+      ".warehouse-card .meter-power-panel",
+    ).first().textContent();
+    assert(meterPanelText.includes("采样时间"));
+    assert(!meterPanelText.includes("数据小时"));
+    const machinePowerTimeText = await page.locator(
+      ".warehouse-card .power-time",
+    ).first().textContent();
+    assert(machinePowerTimeText.includes("采样时间"));
+    assert(machinePowerTimeText.includes("UTC+0"));
+    assert(!machinePowerTimeText.includes("数据小时"));
+    assert((await page.locator("[data-metric='meter'] .overview-label")
+      .textContent()).includes("UTC+0"));
+    const meterTrendButton = page.locator(".warehouse-card .meter-trend-button")
+      .first();
+    assert(await meterTrendButton.isVisible());
+    await meterTrendButton.click();
+    await page.waitForSelector("#meter-trend[open]");
+    assert.equal(
+      await page.locator("#meter-trend .meter-trend-stat").count(),
+      3,
+    );
+    assert((await page.locator("#meter-trend-meta").textContent())
+      .includes("UTC+0"));
+    assert((await page.locator("#meter-trend-summary").textContent())
+      .includes("当日电表平均功率"));
+    assert((await page.locator("#meter-trend-summary").textContent())
+      .includes("当日电表最大功率"));
+    assert(!(await page.locator("#meter-trend-summary").textContent())
+      .includes("矿箱理论功率"));
+    assert((await page.locator("#meter-trend-summary").textContent())
+      .includes("矿箱小时实际功率"));
+    assert(!(await page.locator("#meter-trend-summary").textContent())
+      .includes("Lark-OM表在架功率"));
+    assert(await page.locator("#meter-trend .meter-trend-line").count() > 0);
+    assert(await page.locator("#meter-trend .meter-trend-line.actual")
+      .count() > 0);
+    assert.equal(
+      await page.locator("#meter-trend .meter-trend-reference.theory").count(),
+      0,
+    );
+    assert.equal(
+      await page.locator("#meter-trend .meter-trend-selected-line").count(),
+      0,
+    );
+    assert.equal(
+      await page.locator("#meter-trend .meter-trend-selected-point").count(),
+      0,
+    );
+    assert(await page.locator("#meter-trend-tooltip")
+      .evaluate(element => element.hidden));
+    const firstValidMeterHour = await page.locator(
+      "#meter-trend .meter-trend-hit",
+    ).evaluateAll(elements =>
+      elements.find(element =>
+        meterTrendState.hours[Number(element.dataset.meterTrendHour)]
+      )?.dataset.meterTrendHour || null
+    );
+    assert(firstValidMeterHour != null);
+    await page.locator(
+      `#meter-trend [data-meter-trend-hour="${firstValidMeterHour}"]`,
+    ).hover();
+    assert.equal(
+      await page.locator("#meter-trend .meter-trend-selected-line").count(),
+      1,
+    );
+    assert.equal(
+      await page.locator("#meter-trend .meter-trend-selected-point").count(),
+      1,
+    );
+    assert(!(await page.locator("#meter-trend-tooltip")
+      .evaluate(element => element.hidden)));
+    assert(await page.evaluate(() => {
+      const tooltip = document.querySelector("#meter-trend-tooltip")
+        .getBoundingClientRect();
+      const chart = document.querySelector(".meter-trend-chart-wrap")
+        .getBoundingClientRect();
+      return tooltip.left >= chart.left
+        && tooltip.right <= chart.right + 1
+        && tooltip.top >= chart.top
+        && tooltip.bottom <= chart.bottom + 1;
+    }), "电表趋势数值框必须完整显示在图表区域内");
+    const initialMeterTooltip = await page.locator("#meter-trend-tooltip")
+      .textContent();
+    assert(initialMeterTooltip.includes("采样时间"));
+    assert(initialMeterTooltip.includes("电表小时实测功率"));
+    assert(initialMeterTooltip.includes("矿箱小时实际功率"));
+    assert(!initialMeterTooltip.includes("Lark-OM表在架功率"));
+    assert(!initialMeterTooltip.includes("矿箱理论功率"));
+    const alternateMeterHour = await page.locator(
+      "#meter-trend .meter-trend-hit",
+    ).evaluateAll(elements => {
+      const alternate = elements.find(element =>
+        Number(element.dataset.meterTrendHour) !== meterTrendState.hoveredHourIndex
+        && meterTrendState.hours[Number(element.dataset.meterTrendHour)]
+      );
+      return alternate?.dataset.meterTrendHour || null;
+    });
+    assert(alternateMeterHour != null);
+    await page.locator(
+      `#meter-trend [data-meter-trend-hour="${alternateMeterHour}"]`,
+    ).click();
+    assert.notEqual(
+      await page.locator("#meter-trend-tooltip").textContent(),
+      initialMeterTooltip,
+    );
+    assert.equal(
+      await page.evaluate(() => meterTrendState.hoveredHourIndex),
+      Number(alternateMeterHour),
+    );
+    await page.mouse.move(4, 4);
+    assert(await page.locator("#meter-trend-tooltip")
+      .evaluate(element => element.hidden));
+    assert.equal(
+      await page.locator("#meter-trend .meter-trend-selected-line").count(),
+      0,
+    );
+    await page.screenshot({
+      path: path.join(
+        ROOT, "outputs", "dashboard-check", "meter-trend-dialog.png",
+      ),
+      fullPage: false,
+    });
+    await page.locator("#meter-trend-close").click();
+    assert(!(await page.locator("#meter-trend").evaluate(dialog => dialog.open)));
     const meterScaleText = await page.locator(
       ".warehouse-card .meter-power-scale",
     ).first().textContent();
     assert(meterScaleText.includes("% 理论功率"));
     assert(meterScaleText.includes("100%"));
     assert(meterScaleText.includes("kW"));
+    const meterScaleRatios = await page.locator(
+      ".warehouse-card .meter-power-scale",
+    ).evaluateAll(scales => scales.map(scale => {
+      const track = scale.querySelector(".meter-power-track");
+      const ratio = Number(track?.dataset.meterLoadRatio);
+      const fillPercent = Number(
+        track?.querySelector("i")?.style.width.replace("%", ""),
+      );
+      const labelRatio = Number(
+        scale.querySelector(".meter-power-scale-labels > strong")
+          ?.textContent.match(/([\d,.]+)%/)?.[1].replaceAll(",", ""),
+      );
+      return { ratio, fillPercent, labelRatio };
+    }));
+    assert(meterScaleRatios.some(item => item.ratio > 100));
+    assert(meterScaleRatios.every(item =>
+      Number.isFinite(item.ratio)
+      && Number.isFinite(item.labelRatio)
+      && Math.abs(item.ratio - item.labelRatio) < 0.1
+    ), "电表刻度必须显示实测功率/理论功率，不能封顶为 100%");
+    assert(meterScaleRatios.every(item =>
+      Number.isFinite(item.fillPercent)
+      && Math.abs(item.fillPercent - Math.min(item.ratio, 100)) < 0.1
+    ), "电表刻度条在达到或超过理论功率时必须填满");
+    assert(meterScaleRatios.some(item =>
+      item.ratio > 100 && item.fillPercent === 100
+    ), "超过矿箱理论功率时，电表刻度条必须填满并保留真实超限比例");
     assert.equal(await page.locator(".peak-strip").count(), 0);
     assert((await page.locator("#metrics").textContent()).includes(
       "Lark-OM表在架功率"
@@ -1110,8 +1313,8 @@ async function verifyBrowser(catalog) {
     );
     assert(Number.isFinite(latestRatio));
     const ratioSummary = await page.locator(
-      "#trend-summary .trend-stat.current .trend-stat-value"
-    ).textContent();
+      "#trend-summary .trend-stat .trend-stat-value"
+    ).first().textContent();
     assert.equal(ratioSummary.trim(), latestRatio.toFixed(2));
     await page.locator("[data-load-filter='below']").click();
     assert(await page.locator(".warehouse-card").count() > 0);
@@ -1126,32 +1329,71 @@ async function verifyBrowser(catalog) {
       whiteoak.warehouse_count);
     await page.locator("[data-trend-metric='power']").click();
     assert((await page.locator("#trend-title").textContent()).includes(
-      "矿箱功率趋势"
+      "矿箱功率 · 近 7 天日均"
+    ));
+    assert((await page.locator("#chart-note").textContent()).includes(
+      "当日有效小时平均"
     ));
     assert(!(await page.locator("#trend-title").textContent()).includes(
       "占理论功率比例"
     ));
     assert.equal(await page.locator("#trend .chart-line.actual").count(), 1);
-    assert.equal(await page.locator("#trend .chart-line.theory").count(), 0);
-    assert.equal(
-      await page.locator("#trend .chart-theory-reference").count(),
-      1,
-    );
+    assert.equal(await page.locator("#trend .chart-line.meter").count(), 1);
+    assert.equal(await page.locator("#trend .chart-line.peak").count(), 1);
+    assert.equal(await page.locator("#trend .chart-line.theory").count(), 1);
     assert.equal(await page.locator("#trend .chart-line.mounted").count(), 0);
-    assert.equal(
-      await page.locator("#trend .chart-series-point.mounted").count(),
-      2,
-    );
-    const mountedValues = await page.evaluate(() => {
-      const mounted = trendState.definitions.find(item => item.key === "mounted");
-      return trendState.series.map(item => chartNumber(mounted, item));
-    });
-    assert.equal(mountedValues.filter(value => value != null).length, 2);
-    assert(mountedValues.some(value => value == null));
+    assert.equal(await page.evaluate(() =>
+      trendState.definitions.some(item => item.key === "actual")
+    ), true);
+    assert.equal(await page.evaluate(() =>
+      trendState.definitions.some(item => item.key === "mounted")
+    ), false);
     assert.equal(await page.locator("#trend-summary .trend-stat").count(), 4);
     assert.equal(await page.locator("#trend-summary .trend-legend").count(), 0);
-    assert((await page.locator("#trend-meta").textContent()).includes("kW"));
-    assert(!(await page.locator("#trend-meta").textContent()).includes("%"));
+    const latestPowerDaily = whiteoak.daily_summary.find(item =>
+      item.date === catalog.latest_date
+    );
+    assert(
+      (await page.locator("#trend-summary").textContent())
+        .includes("当日电表平均功率")
+    );
+    assert(
+      (await page.locator("#trend-summary").textContent())
+        .includes("当日电表最大功率")
+    );
+    assert.equal(
+      (await page.locator(
+        "#trend-summary .trend-stat .trend-stat-value"
+      ).first().textContent()).trim(),
+      (latestPowerDaily.meter_hour_sum_kw
+        / latestPowerDaily.meter_hours_with_data)
+        .toLocaleString("zh-CN", { maximumFractionDigits: 1 }),
+    );
+    assert.equal(
+      (await page.locator(
+        "#trend-summary .trend-stat .trend-stat-value"
+      ).nth(1).textContent()).trim(),
+      latestPowerDaily.meter_hour_peak_kw
+        .toLocaleString("zh-CN", { maximumFractionDigits: 1 }),
+    );
+    assert.equal(
+      (await page.locator(
+        "#trend-summary .trend-stat .trend-stat-value"
+      ).nth(3).textContent()).trim(),
+      (latestPowerDaily.actual_power_kw
+        / latestPowerDaily.hours_with_data)
+        .toLocaleString("zh-CN", { maximumFractionDigits: 1 }),
+    );
+    assert(
+      (await page.locator("#trend-summary").textContent())
+        .includes("当日矿箱平均功率")
+    );
+    assert(
+      !(await page.locator("#trend-summary").textContent())
+        .includes("Lark-OM表在架功率")
+    );
+    assert((await page.locator("#chart-note").textContent()).includes("kW"));
+    assert(!(await page.locator("#chart-note").textContent()).includes("%"));
     assert(await page.evaluate(() => trendState.minValue > 0));
     const powerAxisLabels = await page.locator("#trend .chart-axis")
       .allTextContents();
@@ -1159,9 +1401,9 @@ async function verifyBrowser(catalog) {
     assert(powerAxisLabels.every(label => label.includes("kW")));
     assert(powerAxisLabels.every(label => !label.includes("%")));
     const powerChartValues = await page.evaluate(() => {
-      const actual = trendState.definitions.find(item => item.key === "actual");
+      const meter = trendState.definitions.find(item => item.key === "meter");
       return trendState.series
-        .map(item => chartNumber(actual, item))
+        .map(item => chartNumber(meter, item))
         .filter(value => value != null);
     });
     assert(powerChartValues.length > 0);
@@ -1175,7 +1417,42 @@ async function verifyBrowser(catalog) {
     );
     const powerTooltipText = await page.locator("#chart-tooltip").textContent();
     assert(powerTooltipText.includes("kW"));
+    assert(powerTooltipText.includes("当日电表平均功率"));
+    assert(powerTooltipText.includes("当日矿箱平均功率"));
+    const meterLineAppearance = await page.locator(".chart-line.meter").first().evaluate(line => {
+      const style = getComputedStyle(line);
+      return {
+        stroke: style.stroke,
+        strokeWidth: Number.parseFloat(style.strokeWidth),
+      };
+    });
+    assert.notStrictEqual(meterLineAppearance.stroke, "none");
+    assert(meterLineAppearance.strokeWidth > 0);
+    assert(powerTooltipText.includes("矿箱理论功率"));
+    assert(!powerTooltipText.includes("Lark-OM表在架功率"));
+    assert(powerTooltipText.includes("当日电表最大功率"));
+    assert(powerTooltipText.includes("峰值小时"));
+    assert.equal(
+      await page.locator("#chart-tooltip > strong").count(),
+      0,
+    );
+    assert.equal(
+      await page.locator("#chart-tooltip .tooltip-series > span").count(),
+      4,
+    );
+    const powerTooltipStyles = await page.locator(
+      "#chart-tooltip .tooltip-series b",
+    ).evaluateAll(elements => elements.map(element => {
+      const style = getComputedStyle(element);
+      return `${style.fontSize}/${style.fontWeight}/${style.color}`;
+    }));
+    assert.equal(
+      new Set(powerTooltipStyles).size,
+      1,
+      "四个功率值必须使用相同字号、字重和颜色",
+    );
     assert(!powerTooltipText.includes("%"));
+    assert(!powerTooltipText.includes("实际功率"));
     assert(!powerTooltipText.includes("Lark-OM表在架数据使用"));
     await page.mouse.move(2, 2);
     assert.equal(
@@ -1223,13 +1500,16 @@ async function verifyBrowser(catalog) {
       expectedCoverageWarnings);
 
     await page.locator("[data-trend-mode='hourly']").click();
+    assert((await page.locator("#trend-title").textContent()).includes(
+      "当日逐小时"
+    ));
     assert.equal(await page.locator("#trend .chart-hit").count(), 24);
     assert.equal(
       await page.locator("#trend .chart-missing-band").count(),
       24 - latestDaily.hours_with_data,
     );
     assert((await page.locator("#trend-summary").textContent()).includes("当前小时"));
-    assert((await page.locator("#trend-meta").textContent()).includes("灰色带"));
+    assert((await page.locator("#chart-note").textContent()).includes("灰色带"));
     await page.locator("[data-trend-mode='daily']").click();
 
     const chartDate = whiteoak.available_dates[2];
@@ -1275,10 +1555,23 @@ async function verifyBrowser(catalog) {
       assert((await page.locator("#detail-note").textContent())
         .includes("单机明细需当日导出"));
     }
-    assert(await page.locator(".warehouse-card .capacity-row").count() > 0);
-    assert.equal(await page.locator(
-      ".warehouse-card .lark-power-panel.snapshot-missing"
-    ).count(), 0);
+    const firstDateHasLark = larkSnapshotDatesInRange.has(firstDate);
+    if (firstDateHasLark) {
+      assert(await page.locator(".warehouse-card .capacity-row").count() > 0);
+      assert.equal(await page.locator(
+        ".warehouse-card .lark-power-panel.snapshot-missing"
+      ).count(), 0);
+    }
+    else {
+      assert.equal(await page.locator(
+        ".warehouse-card .capacity-row"
+      ).count(), 0);
+      assert.equal(await page.locator(
+        ".warehouse-card .lark-power-panel.snapshot-missing"
+      ).count(), await page.locator(
+        ".warehouse-card:not(.missing-card)"
+      ).count());
+    }
 
     const noSnapshotDate = whiteoak.available_dates.find(date =>
       !larkSnapshotDatesInRange.has(date)
@@ -1383,7 +1676,7 @@ async function verifyBrowser(catalog) {
     ).textContent();
     assert(hourPeakCardText.includes("当日单机小时峰值功率矿机"));
     assert(hourPeakCardText.includes(expectedMachineStats.machine_hour_peak_ip));
-    assert(dailyPeakCardText.includes("单机当日平均功率峰值矿机"));
+    assert(dailyPeakCardText.includes("矿箱内矿机当日平均功率峰值矿机"));
     assert(dailyPeakCardText.includes(
       expectedMachineStats.machine_daily_avg_peak_ip,
     ));
@@ -1776,6 +2069,59 @@ async function verifyBrowser(catalog) {
       path: path.join(ROOT, "outputs", "dashboard-check", "mobile.png"),
       fullPage: true,
     });
+    await page.locator(".warehouse-card .meter-trend-button").first().click();
+    await page.waitForSelector("#meter-trend[open]");
+    assert.equal(
+      await page.locator("#meter-trend .meter-trend-stat").count(),
+      3,
+    );
+    assert(await page.evaluate(() => {
+      const dialog = document.querySelector("#meter-trend");
+      const box = dialog.getBoundingClientRect();
+      return box.left >= 0
+        && box.right <= innerWidth + 1
+        && dialog.scrollWidth <= dialog.clientWidth + 1;
+    }), "移动端电表趋势弹窗不能横向溢出");
+    assert(await page.locator("#meter-trend-tooltip")
+      .evaluate(element => element.hidden));
+    const mobileMeterHour = await page.locator(
+      "#meter-trend .meter-trend-hit",
+    ).evaluateAll(elements =>
+      elements.find(element =>
+        meterTrendState.hours[Number(element.dataset.meterTrendHour)]
+      )?.dataset.meterTrendHour || null
+    );
+    assert(mobileMeterHour != null);
+    await page.locator(
+      `#meter-trend [data-meter-trend-hour="${mobileMeterHour}"]`,
+    ).click();
+    assert(!(await page.locator("#meter-trend-tooltip")
+      .evaluate(element => element.hidden)));
+    assert(await page.evaluate(() => {
+      const tooltip = document.querySelector("#meter-trend-tooltip")
+        .getBoundingClientRect();
+      const chart = document.querySelector(".meter-trend-chart-wrap")
+        .getBoundingClientRect();
+      return tooltip.left >= chart.left
+        && tooltip.right <= chart.right + 1
+        && tooltip.top >= chart.top
+        && tooltip.bottom <= chart.bottom + 1;
+    }), "移动端电表趋势数值框必须完整显示");
+    assert(await page.evaluate(() =>
+      [...document.querySelectorAll(
+        "#meter-trend .meter-trend-stat > span, "
+        + "#meter-trend .meter-trend-stat > strong, "
+        + "#meter-trend .meter-trend-stat > em",
+      )].every(element => element.scrollWidth <= element.clientWidth + 1)
+    ), "移动端电表趋势弹窗文字不能溢出容器");
+    await page.screenshot({
+      path: path.join(
+        ROOT, "outputs", "dashboard-check", "meter-trend-mobile.png",
+      ),
+      fullPage: false,
+    });
+    await page.locator("#meter-trend-close").click();
+    assert(!(await page.locator("#meter-trend").evaluate(dialog => dialog.open)));
     await page.locator(
       ".warehouse-card [data-distribution-id]:not([disabled])",
     ).first().click();
@@ -1826,7 +2172,7 @@ async function verifyBrowser(catalog) {
     `${hourBundles} hourly bundles, ${lark.record_count} Lark power records; ` +
     (DATA_ONLY
       ? "data, hourly bundles and lazy gzip details"
-      : "data, hourly bundles, lazy gzip details, Lark matching, distribution dialogs, peak drill-down, charts, site/date/hour switching and mobile layout"),
+      : "data, hourly bundles, lazy gzip details, Lark matching, distribution dialogs, meter trend dialog, peak drill-down, charts, site/date/hour switching and mobile layout"),
   );
 })().catch(error => {
   console.error(error);

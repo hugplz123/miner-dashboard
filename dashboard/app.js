@@ -1401,12 +1401,14 @@ function renderTrend() {
           chartValue: item => item.theoreticalPower,
         },
         {
-          key: "mounted",
-          label: "Lark-OM表在架功率",
-          className: "mounted",
+          key: "actual",
+          label: dailyMode
+            ? "当日矿箱平均功率"
+            : "矿箱小时实际功率",
+          className: "actual",
           unit: "kW",
-          value: item => item.mountedPower,
-          chartValue: item => item.mountedPower,
+          value: item => item.actualPower,
+          chartValue: item => item.actualPower,
         },
       ];
   const primary = definitions.find(definition => definition.anchor)
@@ -1430,8 +1432,8 @@ function renderTrend() {
   }
   else {
     $("chart-note").textContent = dailyMode
-      ? `近 7 天 · 每天 1 个点 · 电表为当日有效小时平均，理论功率为当日固定值，在架功率为当日快照，最大功率为当日小时合计峰值 · kW · 数据时区 ${DATA_TIMEZONE}${incompleteDays ? " · * 存在小时或矿箱缺口" : ""}`
-      : `${selectedDate} 当日逐小时 · 电表为每个 UTC 小时实测值，理论功率和当日电表最大功率为整日参考 · kW · 数据时区 ${DATA_TIMEZONE} · 当日覆盖 ${coverageLabel(hours.length)} · 灰色带为数据缺失小时`;
+      ? `近 7 天 · 每天 1 个点 · 矿箱和电表均为当日有效小时平均，理论功率为当日固定值，最大功率为当日电表小时峰值 · kW · 数据时区 ${DATA_TIMEZONE}${incompleteDays ? " · * 存在小时或矿箱缺口" : ""}`
+      : `${selectedDate} 当日逐小时 · 矿箱实际功率为矿机小时平均功耗汇总，电表为每个 UTC 小时实测值，理论功率和当日电表最大功率为整日参考 · kW · 数据时区 ${DATA_TIMEZONE} · 当日覆盖 ${coverageLabel(hours.length)} · 灰色带为数据缺失小时`;
   }
   const selectedKey = trendMode === "daily" ? selectedDate : String($("hour").value);
   const allValues = definitions.flatMap(definition =>
@@ -1485,58 +1487,72 @@ function renderTrend() {
     const averageLabel = trendMode === "daily"
       ? `近 7 天逐日功耗比均值${incompleteDays ? "（含不完整日）" : ""}`
       : "当日矿箱整体功耗比均值";
+    const averageContext = trendMode === "daily"
+      ? "按有效日期等权平均"
+      : "按当日有效小时样本汇总";
     $("trend-summary").innerHTML = `
-      <span class="trend-stat">
+      <div class="trend-stat">
         <span class="trend-stat-label">${currentLabel}矿箱整体功耗比</span>
-        <span class="trend-stat-value">${fmtRatio(selected?.ratio)}</span>
-        <span class="trend-stat-unit">W/TH</span>
+        <span class="trend-stat-reading">
+          <span class="trend-stat-value">${fmtRatio(selected?.ratio)}</span>
+          <span class="trend-stat-unit">W/TH</span>
+        </span>
         <span class="trend-stat-context">${esc(selected?.label || "")}${esc(selectedCoverage)}</span>
-      </span>
-      <span class="trend-stat-separator" aria-hidden="true"></span>
-      <span class="trend-stat">
+      </div>
+      <div class="trend-stat">
         <span class="trend-stat-label">${averageLabel}</span>
-        <span class="trend-stat-value">${fmtRatio(average)}</span>
-        <span class="trend-stat-unit">W/TH</span>
-      </span>`;
+        <span class="trend-stat-reading">
+          <span class="trend-stat-value">${fmtRatio(average)}</span>
+          <span class="trend-stat-unit">W/TH</span>
+        </span>
+        <span class="trend-stat-context">${averageContext}</span>
+      </div>`;
   }
   else {
     const meterLabel = dailyMode ? "当日电表平均功率" : "当前小时电表功率";
+    const actualLabel = dailyMode ? "当日矿箱平均功率" : "当前小时矿箱实际功率";
     const theoryLabel = dailyMode ? "矿箱理论功率" : "当前小时理论功率";
-    const mountedLabel = "Lark-OM表在架功率";
     const peakLabel = dailyMode ? "当日电表最大功率" : "当日电表最大功率";
     const periodText = dailyMode
       ? `${selected?.label || ""} · 当日有效小时平均`
       : hourLabel(Number(selected?.key));
+    const actualContext = dailyMode ? "当日有效小时平均" : "矿机小时平均功耗汇总";
     const peakHourText = finite(selected?.meterPeakHour)
       ? `峰值 ${hourOnlyLabel(Number(selected.meterPeakHour))}`
       : "峰值小时未记录";
     $("trend-summary").innerHTML = `
-      <span class="trend-stat">
+      <div class="trend-stat">
         <span class="trend-stat-label">${meterLabel}</span>
-        <span class="trend-stat-value">${fmt(selected?.meterPower)}</span>
-        <span class="trend-stat-unit">kW</span>
+        <span class="trend-stat-reading">
+          <span class="trend-stat-value">${fmt(selected?.meterPower)}</span>
+          <span class="trend-stat-unit">kW</span>
+        </span>
         <span class="trend-stat-context">${esc(periodText)}</span>
-      </span>
-      <span class="trend-stat-separator" aria-hidden="true"></span>
-      <span class="trend-stat">
+      </div>
+      <div class="trend-stat">
         <span class="trend-stat-label">${peakLabel}</span>
-        <span class="trend-stat-value">${fmt(selected?.meterPeakPower)}</span>
-        <span class="trend-stat-unit">kW</span>
+        <span class="trend-stat-reading">
+          <span class="trend-stat-value">${fmt(selected?.meterPeakPower)}</span>
+          <span class="trend-stat-unit">kW</span>
+        </span>
         <span class="trend-stat-context">${esc(peakHourText)}</span>
-      </span>
-      <span class="trend-stat-separator" aria-hidden="true"></span>
-      <span class="trend-stat">
+      </div>
+      <div class="trend-stat">
         <span class="trend-stat-label">${theoryLabel}</span>
-        <span class="trend-stat-value">${fmt(selected?.theoreticalPower)}</span>
-        <span class="trend-stat-unit">kW</span>
-      </span>
-      <span class="trend-stat-separator" aria-hidden="true"></span>
-      <span class="trend-stat">
-        <span class="trend-stat-label">${mountedLabel}</span>
-        <span class="trend-stat-value">${fmt(selected?.mountedPower)}</span>
-        <span class="trend-stat-unit">kW</span>
-        <span class="trend-stat-context">当日快照</span>
-      </span>`;
+        <span class="trend-stat-reading">
+          <span class="trend-stat-value">${fmt(selected?.theoreticalPower)}</span>
+          <span class="trend-stat-unit">kW</span>
+        </span>
+        <span class="trend-stat-context">当日固定配置</span>
+      </div>
+      <div class="trend-stat">
+        <span class="trend-stat-label">${actualLabel}</span>
+        <span class="trend-stat-reading">
+          <span class="trend-stat-value">${fmt(selected?.actualPower)}</span>
+          <span class="trend-stat-unit">kW</span>
+        </span>
+        <span class="trend-stat-context">${esc(actualContext)}</span>
+      </div>`;
   }
   const grid = [0, 1, 2, 3].map(index => {
     const value = maxValue - (maxValue - minValue) * index / 3;
@@ -1567,7 +1583,7 @@ function renderTrend() {
     const detail = item.detail || {};
     const center = primaryPoints[index];
     const dateText = dailyMode
-      ? `${item.key} · 近 7 天中的当日有效小时平均`
+      ? item.key
       : hourLabel(Number(item.key));
     const coverage = trendMode === "daily" && detail.expected_hours
       ? ` · ${siteCoverageLabel(detail)}`
@@ -1575,8 +1591,8 @@ function renderTrend() {
     const valueText = ratioMode
       ? `矿箱整体功耗比 ${fmtRatio(item.ratio)} W/TH`
       : dailyMode
-        ? `当日电表平均功率 ${fmt(item.meterPower)} kW，当日电表最大功率 ${fmt(item.meterPeakPower)} kW${finite(item.meterPeakHour) ? `（${hourOnlyLabel(Number(item.meterPeakHour))}）` : ""}，矿箱理论功率 ${fmt(item.theoreticalPower)} kW，Lark-OM表在架功率 ${fmt(item.mountedPower)} kW`
-        : `电表小时实测功率 ${fmt(item.meterPower)} kW，当日电表最大功率 ${fmt(item.meterPeakPower)} kW${finite(item.meterPeakHour) ? `（${hourOnlyLabel(Number(item.meterPeakHour))}）` : ""}，矿箱理论功率 ${fmt(item.theoreticalPower)} kW，Lark-OM表在架功率 ${fmt(item.mountedPower)} kW`;
+        ? `当日电表平均功率 ${fmt(item.meterPower)} kW，当日矿箱平均功率 ${fmt(item.actualPower)} kW，当日电表最大功率 ${fmt(item.meterPeakPower)} kW${finite(item.meterPeakHour) ? `（${hourOnlyLabel(Number(item.meterPeakHour))}）` : ""}，矿箱理论功率 ${fmt(item.theoreticalPower)} kW`
+        : `电表小时实测功率 ${fmt(item.meterPower)} kW，矿箱小时实际功率 ${fmt(item.actualPower)} kW，当日电表最大功率 ${fmt(item.meterPeakPower)} kW${finite(item.meterPeakHour) ? `（${hourOnlyLabel(Number(item.meterPeakHour))}）` : ""}，矿箱理论功率 ${fmt(item.theoreticalPower)} kW`;
     const sampleText = ratioMode
       ? `样本 ${detail.power_ratio_sample_count ?? "—"}/${detail.machine_count ?? "—"}`
       : "";
@@ -1639,7 +1655,7 @@ function showTooltip(event) {
   const item = series[index];
   const detail = item.detail || {};
   const dateText = trendState.mode === "daily"
-    ? `${item.key} · 近 7 天中的当日有效小时平均`
+    ? item.key
     : hourLabel(Number(item.key));
   const coverage = trendMode === "daily" && detail.expected_hours
     ? ` · ${siteCoverageLabel(detail)}`
@@ -1653,15 +1669,17 @@ function showTooltip(event) {
   else {
     const meterLabel = trendState.mode === "daily"
       ? "当日电表平均功率" : "该 UTC 小时电表实测功率";
+    const actualLabel = trendState.mode === "daily"
+      ? "当日矿箱平均功率" : "该 UTC 小时矿箱实际功率";
     const peakHourText = finite(item.meterPeakHour)
       ? ` · 峰值小时 ${hourOnlyLabel(Number(item.meterPeakHour))}`
       : "";
     tooltip.innerHTML = `<span>${esc(dateText)}${esc(coverage)}</span>
       <div class="tooltip-series">
         <span><i style="color:#176b58"></i>${esc(meterLabel)}</span><b>${fmt(item.meterPower)} kW</b>
+        <span><i style="color:#147960"></i>${esc(actualLabel)}</span><b>${fmt(item.actualPower)} kW</b>
         <span><i style="color:#d95836"></i>当日电表最大功率</span><b>${fmt(item.meterPeakPower)} kW${peakHourText}</b>
         <span><i style="color:#7f8c89"></i>矿箱理论功率</span><b>${fmt(item.theoreticalPower)} kW</b>
-        <span><i style="color:#477b9d"></i>Lark-OM表在架功率</span><b>${finite(item.mountedPower) ? `${fmt(item.mountedPower)} kW` : "暂无"}</b>
       </div>`;
   }
   const x = pad.left + (series.length === 1 ? plotW / 2 : plotW * index / (series.length - 1));

@@ -217,18 +217,52 @@ main.is-loading #metrics, main.is-loading .trend, main.is-loading .warehouse-gri
   box-shadow: 0 1px 3px #213b341c;
 }
 .trend-stats {
-  display: flex; align-items: center; flex-wrap: wrap; gap: 7px 12px;
-  min-width: 0; max-width: 100%; min-height: 28px; margin-top: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 1px;
+  min-width: 0;
+  max-width: 100%;
+  margin-top: 13px;
+  border: 1px solid #dce5e2;
+  border-radius: 6px;
+  background: #dce5e2;
+  overflow: hidden;
 }
 .trend-stat {
-  display: inline-flex; align-items: baseline; flex-wrap: wrap;
-  gap: 5px; min-width: 0; max-width: 100%;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding: 10px 14px 9px;
+  background: #f8faf9;
 }
-.trend-stat-label { color: #6b7978; font-size: 11px; margin-right: 2px; }
-.trend-stat-value { color: #334340; font-size: 18px; font-weight: 650; line-height: 1; font-variant-numeric: tabular-nums; }
+.trend-stat-label {
+  color: #657572;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+.trend-stat-reading {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+  margin-top: 4px;
+}
+.trend-stat-value {
+  color: #263936;
+  font-size: 21px;
+  font-weight: 650;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
+}
 .trend-stat-unit { color: #7b8887; font-size: 10px; }
-.trend-stat-context { color: #788684; font-size: 10px; padding-left: 3px; }
-.trend-stat-separator { width: 1px; height: 18px; background: #d6dfdc; }
+.trend-stat-context {
+  min-height: 14px;
+  margin-top: 4px;
+  color: #788684;
+  font-size: 10px;
+  line-height: 1.4;
+}
 .trend-legend {
   display: inline-flex; align-items: center; flex-wrap: wrap; gap: 7px 12px;
   margin-left: 3px; color: #667573; font-size: 10px;
@@ -238,7 +272,6 @@ main.is-loading #metrics, main.is-loading .trend, main.is-loading .warehouse-gri
 .trend-legend .actual { border-color: #147960; }
 .trend-legend .meter { border-color: #176b58; }
 .trend-legend .theory { border-color: #7d8987; border-top-style: dashed; }
-.trend-legend .mounted { border-color: #477b9d; border-top-style: dashed; }
 .trend-legend .peak { border-color: #d95836; }
 .chart-wrap { position: relative; margin-top: 15px; min-height: 218px; }
 #trend { display: block; width: 100%; height: 218px; overflow: visible; }
@@ -288,15 +321,12 @@ main.is-loading #metrics, main.is-loading .trend, main.is-loading .warehouse-gri
 .chart-line.ratio, .chart-line.actual { stroke: var(--green); }
 .chart-line.meter,
 .chart-line.theory,
-.chart-line.mounted,
 .chart-line.peak { stroke-width: 2.2; }
 .chart-line.meter { stroke: #176b58; }
 .chart-line.theory { stroke: #7f8c89; stroke-dasharray: 5 4; }
-.chart-line.mounted { stroke: #477b9d; stroke-dasharray: 7 4; }
 .chart-line.peak { stroke: #d95836; stroke-dasharray: 3 3; }
 .chart-series-point.meter { fill: #176b58; stroke: #fff; stroke-width: 1.5; }
 .chart-series-point.theory { fill: #7f8c89; stroke: #fff; stroke-width: 1.5; }
-.chart-series-point.mounted { fill: #477b9d; stroke: #fff; stroke-width: 1.5; }
 .chart-series-point.peak { fill: #d95836; stroke: #fff; stroke-width: 1.5; }
 .chart-mean { stroke: #9caaa6; stroke-width: 1; stroke-dasharray: 4 4; }
 .chart-selection { stroke: #246f5d; stroke-width: 1.3; stroke-dasharray: 4 3; opacity: .7; }
@@ -2134,7 +2164,7 @@ tbody tr:hover { background: #f4faf8; }
   .section-title { align-items: flex-start; flex-direction: column; gap: 6px; }
   .trend-tools { align-items: flex-start; width: 100%; }
   .trend-controls { justify-content: flex-start; }
-  .trend-stat-separator { display: none; }
+  .trend-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .meter-trend-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   dialog { padding: 16px; }
   #detail-metrics.metrics { grid-template-columns: minmax(0, 1fr); }
@@ -2278,6 +2308,7 @@ tbody tr:hover { background: #f4faf8; }
   .overview-support { grid-template-columns: 1fr; }
   .overview-support-item > em { max-width: 45%; }
   .trend-controls { width: 100%; }
+  .trend-stats { grid-template-columns: minmax(0, 1fr); }
   .trend-metrics, .trend-modes { flex: 1; }
   .trend-metrics button, .trend-modes button { flex: 1; }
   .filters { flex-wrap: wrap; }
