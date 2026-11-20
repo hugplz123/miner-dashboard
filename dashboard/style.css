@@ -328,11 +328,25 @@ main.is-loading #metrics, main.is-loading .trend, main.is-loading .warehouse-gri
 .chart-series-point.peak { fill: #d95836; stroke: #fff; stroke-width: 1.5; }
 .chart-mean { stroke: #9caaa6; stroke-width: 1; stroke-dasharray: 4 4; }
 .chart-selection { stroke: #246f5d; stroke-width: 1.3; stroke-dasharray: 4 3; opacity: .7; }
-.chart-current { fill: #fff; stroke: var(--green); stroke-width: 2.5; }
+.chart-current { stroke: #fff; stroke-width: 1.7; pointer-events: none; }
+.chart-current.ratio { fill: var(--green); }
+.chart-current.meter { fill: #176b58; }
+.chart-current.actual { fill: #477b9d; }
+.chart-current.peak { fill: #d95836; }
 .chart-hit { fill: transparent; cursor: pointer; outline: none; }
 .chart-hit:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
-.chart-point { fill: var(--green); pointer-events: none; opacity: .68; }
-.chart-hit:hover + .chart-point, .chart-hit:focus + .chart-point { r: 4.2; opacity: 1; }
+.chart-point {
+  stroke: #fff;
+  stroke-width: 1.2;
+  pointer-events: none;
+  opacity: 0;
+}
+.chart-point.ratio { fill: var(--green); }
+.chart-point.meter { fill: #176b58; }
+.chart-point.actual { fill: #477b9d; }
+.chart-point.peak { fill: #d95836; }
+.chart-hit-group:hover .chart-point,
+.chart-hit-group:focus-within .chart-point { opacity: 1; }
 .chart-hour { fill: #657476; font-size: 10px; cursor: pointer; }
 .chart-hour:hover { fill: var(--green); }
 

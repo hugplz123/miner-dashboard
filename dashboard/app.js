@@ -1563,7 +1563,7 @@ function renderTrend() {
     if (!item.missing) return "";
     const left = Math.max(pad.left, x(index) - hitWidth / 2);
     const right = Math.min(width - pad.right, x(index) + hitWidth / 2);
-    return `<rect class="chart-missing-band" x="${left}" y="${pad.top}" width="${Math.max(1, right - left)}" height="${plotH}"><title>${esc(item.label)} 矿箱数据缺失</title></rect>`;
+    return `<rect class="chart-missing-band" x="${left}" y="${pad.top}" width="${Math.max(1, right - left)}" height="${plotH}"/>`;
   }).join("") : "";
   const pointsByDefinition = new Map(definitions.map(definition => [
     definition.key,
@@ -1572,10 +1572,8 @@ function renderTrend() {
       return value == null ? null : [x(index), y(value)];
     }),
   ]));
-  const primaryPoints = pointsByDefinition.get(primary.key);
   const hits = series.map((item, index) => {
     const detail = item.detail || {};
-    const center = primaryPoints[index];
     const dateText = dailyMode
       ? item.key
       : hourLabel(Number(item.key));
@@ -1587,16 +1585,25 @@ function renderTrend() {
       : dailyMode
         ? `当日电表平均功率 ${fmt(item.meterPower)} kW，当日矿箱平均功率 ${fmt(item.actualPower)} kW，当日电表最大功率 ${fmt(item.meterPeakPower)} kW${finite(item.meterPeakHour) ? `（${hourOnlyLabel(Number(item.meterPeakHour))}）` : ""}`
         : `电表小时实测功率 ${fmt(item.meterPower)} kW，矿箱小时实际功率 ${fmt(item.actualPower)} kW，当日电表最大功率 ${fmt(item.meterPeakPower)} kW${finite(item.meterPeakHour) ? `（${hourOnlyLabel(Number(item.meterPeakHour))}）` : ""}`;
-    const sampleText = ratioMode
-      ? `样本 ${detail.power_ratio_sample_count ?? "—"}/${detail.machine_count ?? "—"}`
-      : "";
     const missingText = item.missing ? "，矿箱数据缺失" : "";
-    return `<rect class="chart-hit" x="${x(index) - hitWidth / 2}" y="${pad.top}" width="${hitWidth}" height="${plotH}" tabindex="0" role="button" data-chart-key="${esc(item.key)}" aria-label="${esc(dateText)}，${esc(valueText)}${esc(coverage)}${esc(missingText)}，点击查看"><title>${esc(dateText)} · ${esc(valueText)}${esc(coverage)}${sampleText ? ` · ${esc(sampleText)}` : ""}${esc(missingText)}</title></rect>
-      ${center ? `<circle class="chart-point" cx="${center[0]}" cy="${center[1]}" r="3"/>` : ""}`;
+    const markers = definitions.map(definition => {
+      const point = pointsByDefinition.get(definition.key)?.[index];
+      return point
+        ? `<circle class="chart-point ${definition.className}" cx="${point[0]}" cy="${point[1]}" r="3.4"/>`
+        : "";
+    }).join("");
+    return `<g class="chart-hit-group">
+      <rect class="chart-hit" x="${x(index) - hitWidth / 2}" y="${pad.top}" width="${hitWidth}" height="${plotH}" tabindex="0" role="button" data-chart-key="${esc(item.key)}" aria-label="${esc(dateText)}，${esc(valueText)}${esc(coverage)}${esc(missingText)}，点击查看"></rect>
+      ${markers}
+    </g>`;
   }).join("");
   const currentIndex = series.findIndex(item => item.key === selectedKey);
-  const currentPoint = currentIndex >= 0 && primaryPoints[currentIndex]
-    ? `<circle class="chart-current" cx="${primaryPoints[currentIndex][0]}" cy="${primaryPoints[currentIndex][1]}" r="4.2"/>` : "";
+  const currentPoints = currentIndex < 0 ? "" : definitions.map(definition => {
+    const point = pointsByDefinition.get(definition.key)?.[currentIndex];
+    return point
+      ? `<circle class="chart-current ${definition.className}" cx="${point[0]}" cy="${point[1]}" r="4"/>`
+      : "";
+  }).join("");
   const selection = currentIndex < 0 ? ""
     : `<line class="chart-selection" x1="${x(currentIndex)}" x2="${x(currentIndex)}" y1="${pad.top}" y2="${pad.top + plotH}"/>`;
   const linePaths = definitions.slice().sort((a, b) =>
@@ -1617,7 +1624,6 @@ function renderTrend() {
       .join("");
     return `${paths}${singletonPoints}`;
   }).join("");
-  const primarySegments = chartSegments(primaryPoints);
   trendState = {
     series, definitions, primary, width, height, pad, minValue, maxValue,
     plotW, plotH, metric: trendMetric, mode: trendMode,
@@ -1631,7 +1637,7 @@ function renderTrend() {
     ${missingBands}${grid}${meanY == null ? "" : `<line class="chart-mean" x1="${pad.left}" x2="${width - pad.right}" y1="${meanY}" y2="${meanY}"/>`}
     ${selection}
     ${linePaths}
-    ${hits}${currentPoint}${labels}`;
+    ${hits}${currentPoints}${labels}`;
 }
 
 function showTooltip(event) {

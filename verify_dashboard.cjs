@@ -1367,6 +1367,8 @@ async function verifyBrowser(catalog) {
     assert.equal(await page.locator("#trend .chart-line.actual").count(), 1);
     assert.equal(await page.locator("#trend .chart-line.meter").count(), 1);
     assert.equal(await page.locator("#trend .chart-line.peak").count(), 1);
+    assert.equal(await page.locator("#trend .chart-current").count(), 3);
+    assert.equal(await page.locator("#trend title").count(), 0);
     assert.equal(await page.locator("#trend .chart-line.theory").count(), 0);
     assert.equal(await page.locator("#trend .chart-line.mounted").count(), 0);
     assert.equal(await page.evaluate(() =>
@@ -1442,6 +1444,17 @@ async function verifyBrowser(catalog) {
       await page.locator("#chart-tooltip").evaluate(element => element.hidden),
       false,
     );
+    const hoveredMarkerClasses = await page.locator(
+      "#trend .chart-hit-group",
+    ).last().locator(".chart-point").evaluateAll(points => points
+      .map(point => ["meter", "actual", "peak"]
+        .find(name => point.classList.contains(name)))
+      .sort());
+    assert.deepEqual(hoveredMarkerClasses, ["actual", "meter", "peak"]);
+    assert((await page.locator("#trend .chart-hit-group").last()
+      .locator(".chart-point").evaluateAll(points => points.map(
+        point => getComputedStyle(point).opacity
+      ))).every(opacity => opacity === "1"));
     const powerTooltipText = await page.locator("#chart-tooltip").textContent();
     assert(powerTooltipText.includes("kW"));
     assert(powerTooltipText.includes("当日电表平均功率"));
@@ -2084,6 +2097,13 @@ async function verifyBrowser(catalog) {
     });
     await page.locator(".warehouse-card .meter-trend-button").first().click();
     await page.waitForSelector("#meter-trend[open]");
+    await page.waitForFunction(
+      () => document.querySelectorAll(
+        "#meter-trend .meter-trend-stat",
+      ).length === 3,
+      undefined,
+      { timeout: 60000 },
+    );
     assert.equal(
       await page.locator("#meter-trend .meter-trend-stat").count(),
       3,
