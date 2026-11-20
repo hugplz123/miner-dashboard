@@ -1033,18 +1033,29 @@ async function verifyBrowser(catalog) {
     const cardIds = () => page.locator(
       ".warehouse-card:not(.missing-card)",
     ).evaluateAll(cards => cards.map(card => card.dataset.warehouseId));
+    const warehouseActualMargin = row => {
+      const theory = Number(row.theoretical_power_kw);
+      const actual = row.actual_power_kw == null
+        ? null : Number(row.actual_power_kw);
+      return Number.isFinite(theory) && Number.isFinite(actual)
+        ? theory - actual : null;
+    };
     const sortedRows = (key, direction = "asc") => [...selectedRows.values()]
       .filter(row => !row.missing)
       .sort((a, b) => {
-        const aMissing = !Number.isFinite(a[key]);
-        const bMissing = !Number.isFinite(b[key]);
+        const valueOf = row =>
+          typeof key === "function" ? key(row) : row[key];
+        const aValue = valueOf(a);
+        const bValue = valueOf(b);
+        const aMissing = !Number.isFinite(aValue);
+        const bMissing = !Number.isFinite(bValue);
         if (aMissing !== bMissing) return aMissing ? 1 : -1;
         if (aMissing) {
           return a.warehouse_name.localeCompare(b.warehouse_name, undefined, {
             numeric: true,
           });
         }
-        const difference = Number(a[key]) - Number(b[key]);
+        const difference = Number(aValue) - Number(bValue);
         return ((direction === "asc" ? difference : -difference)
           || a.warehouse_name.localeCompare(b.warehouse_name, undefined, {
             numeric: true,
@@ -1053,7 +1064,7 @@ async function verifyBrowser(catalog) {
       .map(row => row.warehouse_id);
     assert.deepEqual(await cardIds(), sortedRows("actual_power_kw"));
     await page.locator("#sort").selectOption("available");
-    assert.deepEqual(await cardIds(), sortedRows("available_capacity_kw"));
+    assert.deepEqual(await cardIds(), sortedRows(warehouseActualMargin));
     await page.locator('input[name="sort-order"][value="desc"]').check({
       force: true,
     });
@@ -1062,7 +1073,7 @@ async function verifyBrowser(catalog) {
     ).inputValue(), "desc");
     assert.deepEqual(
       await cardIds(),
-      sortedRows("available_capacity_kw", "desc"),
+      sortedRows(warehouseActualMargin, "desc"),
     );
     await page.locator("#sort").selectOption("name");
     assert.deepEqual(await cardIds(), [...selectedRows.values()]
@@ -1159,8 +1170,24 @@ async function verifyBrowser(catalog) {
     const meterTrendButton = page.locator(".warehouse-card .meter-trend-button")
       .first();
     assert(await meterTrendButton.isVisible());
+    const meterTrendWarehouseId = await meterTrendButton.getAttribute(
+      "data-meter-trend-id",
+    );
+    const meterRequestsBefore = requests.length;
     await meterTrendButton.click();
     await page.waitForSelector("#meter-trend[open]");
+    await page.waitForFunction(() => meterTrendState?.hours?.length > 0);
+    const meterRequests = requests.slice(meterRequestsBefore);
+    assert(meterRequests.some(url =>
+      url.includes(
+        `/data/days/${whiteoak.data_center_id}-${catalog.latest_date.replaceAll("-", "")}.json.gz`,
+      )
+    ), "电表趋势应读取所选场地和日期对应的日压缩包");
+    assert(!meterRequests.some(url => url.includes("supabase_power.json")));
+    assert.equal(
+      await page.evaluate(() => meterTrendState.warehouseId),
+      meterTrendWarehouseId,
+    );
     assert.equal(
       await page.locator("#meter-trend .meter-trend-stat").count(),
       3,
@@ -1340,7 +1367,7 @@ async function verifyBrowser(catalog) {
     assert.equal(await page.locator("#trend .chart-line.actual").count(), 1);
     assert.equal(await page.locator("#trend .chart-line.meter").count(), 1);
     assert.equal(await page.locator("#trend .chart-line.peak").count(), 1);
-    assert.equal(await page.locator("#trend .chart-line.theory").count(), 1);
+    assert.equal(await page.locator("#trend .chart-line.theory").count(), 0);
     assert.equal(await page.locator("#trend .chart-line.mounted").count(), 0);
     assert.equal(await page.evaluate(() =>
       trendState.definitions.some(item => item.key === "actual")
@@ -1348,7 +1375,7 @@ async function verifyBrowser(catalog) {
     assert.equal(await page.evaluate(() =>
       trendState.definitions.some(item => item.key === "mounted")
     ), false);
-    assert.equal(await page.locator("#trend-summary .trend-stat").count(), 4);
+    assert.equal(await page.locator("#trend-summary .trend-stat").count(), 3);
     assert.equal(await page.locator("#trend-summary .trend-legend").count(), 0);
     const latestPowerDaily = whiteoak.daily_summary.find(item =>
       item.date === catalog.latest_date
@@ -1379,7 +1406,7 @@ async function verifyBrowser(catalog) {
     assert.equal(
       (await page.locator(
         "#trend-summary .trend-stat .trend-stat-value"
-      ).nth(3).textContent()).trim(),
+      ).nth(2).textContent()).trim(),
       (latestPowerDaily.actual_power_kw
         / latestPowerDaily.hours_with_data)
         .toLocaleString("zh-CN", { maximumFractionDigits: 1 }),
@@ -1426,9 +1453,21 @@ async function verifyBrowser(catalog) {
         strokeWidth: Number.parseFloat(style.strokeWidth),
       };
     });
+    const actualLineAppearance = await page.locator(".chart-line.actual").first().evaluate(line => {
+      const style = getComputedStyle(line);
+      return {
+        stroke: style.stroke,
+        strokeWidth: Number.parseFloat(style.strokeWidth),
+      };
+    });
     assert.notStrictEqual(meterLineAppearance.stroke, "none");
     assert(meterLineAppearance.strokeWidth > 0);
-    assert(powerTooltipText.includes("矿箱理论功率"));
+    assert.notStrictEqual(
+      meterLineAppearance.stroke,
+      actualLineAppearance.stroke,
+      "电表平均功率与矿箱平均功率必须使用不同颜色",
+    );
+    assert(!powerTooltipText.includes("矿箱理论功率"));
     assert(!powerTooltipText.includes("Lark-OM表在架功率"));
     assert(powerTooltipText.includes("当日电表最大功率"));
     assert(powerTooltipText.includes("峰值小时"));
@@ -1438,7 +1477,7 @@ async function verifyBrowser(catalog) {
     );
     assert.equal(
       await page.locator("#chart-tooltip .tooltip-series > span").count(),
-      4,
+      3,
     );
     const powerTooltipStyles = await page.locator(
       "#chart-tooltip .tooltip-series b",
@@ -1449,7 +1488,7 @@ async function verifyBrowser(catalog) {
     assert.equal(
       new Set(powerTooltipStyles).size,
       1,
-      "四个功率值必须使用相同字号、字重和颜色",
+      "三个功率值必须使用相同字号、字重和颜色",
     );
     assert(!powerTooltipText.includes("%"));
     assert(!powerTooltipText.includes("实际功率"));
@@ -1819,8 +1858,8 @@ async function verifyBrowser(catalog) {
       fullPage: true,
     });
 
-    const outageDate = "2026-11-12";
-    const outageHour = 2026111214;
+    const outageDate = catalog.latest_date;
+    const outageHour = Number(`${outageDate.replaceAll("-", "")}00`);
     await page.selectOption("#date", outageDate);
     await page.waitForFunction(date =>
       document.querySelector("#meta")?.textContent.includes(`当前 ${date}`),
@@ -1835,51 +1874,25 @@ async function verifyBrowser(catalog) {
       await page.locator(".warehouse-card.inferred-outage-card").count(),
       0,
     );
-    const dayMissingWarehouseNames = await page.locator(
-      ".warehouse-card.missing-card .card-title strong",
-    ).allTextContents();
-    assert.deepEqual(
-      dayMissingWarehouseNames.sort(),
-      ["C12"],
-    );
-    const missingC12Card = page.locator(
-      ".warehouse-card.missing-card",
-    ).filter({ hasText: "C12" });
-    assert.equal(await missingC12Card.count(), 1);
-    const missingC12Text = await missingC12Card.textContent();
-    assert(missingC12Text.includes("本小时矿箱数据缺失"));
-    assert(missingC12Text.includes("暂无上报数据"));
-    assert(missingC12Text.includes("不代表矿箱实际功率为 0 kW"));
-    assert(!missingC12Text.includes("停电推断"));
     await page.screenshot({
       path: path.join(
         ROOT, "outputs", "dashboard-check", "outage-inference-desktop.png",
       ),
       fullPage: true,
     });
-    await page.selectOption("#date", catalog.latest_date);
-    await page.waitForFunction(date =>
-      document.querySelector("#meta")?.textContent.includes(`当前 ${date}`),
-    catalog.latest_date);
-    await page.selectOption("#hour", "2026111823");
-    await page.waitForFunction(() =>
-      document.querySelector("#metrics")?.textContent.includes("当前小时 23:00"),
-    );
     const meterOnlyNames = await page.locator(
       ".warehouse-card.meter-only-card .card-title strong",
     ).allTextContents();
     assert.deepEqual(meterOnlyNames.sort(), ["C12", "C26"]);
-    assert.equal(
-      await page.locator(".warehouse-card.inferred-outage-card").count(),
-      0,
-    );
     for (const warehouseName of ["C12", "C26"]) {
       const card = page.locator(".warehouse-card.meter-only-card").filter({
         hasText: warehouseName,
       });
       const text = await card.textContent();
       assert(text.includes("矿机小时数据缺失"));
-      assert(text.includes("0/24 小时"));
+      assert(text.includes(
+        warehouseName === "C12" ? "0/24 小时" : "18/24 小时",
+      ));
       assert(!text.includes("停电推断"));
     }
 

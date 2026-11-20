@@ -269,9 +269,8 @@ main.is-loading #metrics, main.is-loading .trend, main.is-loading .warehouse-gri
 }
 .trend-legend > span { display: inline-flex; align-items: center; gap: 5px; }
 .trend-legend i { width: 12px; height: 0; border-top: 2px solid; }
-.trend-legend .actual { border-color: #147960; }
+.trend-legend .actual { border-color: #477b9d; }
 .trend-legend .meter { border-color: #176b58; }
-.trend-legend .theory { border-color: #7d8987; border-top-style: dashed; }
 .trend-legend .peak { border-color: #d95836; }
 .chart-wrap { position: relative; margin-top: 15px; min-height: 218px; }
 #trend { display: block; width: 100%; height: 218px; overflow: visible; }
@@ -318,15 +317,14 @@ main.is-loading #metrics, main.is-loading .trend, main.is-loading .warehouse-gri
 .chart-area.actual { fill: url(#powerFill); }
 .chart-area.meter { fill: url(#powerFill); }
 .chart-line { fill: none; stroke-width: 2.2; stroke-linejoin: round; stroke-linecap: round; }
-.chart-line.ratio, .chart-line.actual { stroke: var(--green); }
+.chart-line.ratio { stroke: var(--green); }
+.chart-line.actual { stroke: #477b9d; }
 .chart-line.meter,
-.chart-line.theory,
 .chart-line.peak { stroke-width: 2.2; }
 .chart-line.meter { stroke: #176b58; }
-.chart-line.theory { stroke: #7f8c89; stroke-dasharray: 5 4; }
 .chart-line.peak { stroke: #d95836; stroke-dasharray: 3 3; }
 .chart-series-point.meter { fill: #176b58; stroke: #fff; stroke-width: 1.5; }
-.chart-series-point.theory { fill: #7f8c89; stroke: #fff; stroke-width: 1.5; }
+.chart-series-point.actual { fill: #477b9d; stroke: #fff; stroke-width: 1.5; }
 .chart-series-point.peak { fill: #d95836; stroke: #fff; stroke-width: 1.5; }
 .chart-mean { stroke: #9caaa6; stroke-width: 1; stroke-dasharray: 4 4; }
 .chart-selection { stroke: #246f5d; stroke-width: 1.3; stroke-dasharray: 4 3; opacity: .7; }

@@ -54,7 +54,7 @@ let requestVersion = 0, dayRequestVersion = 0, trendMode = "daily";
 let trendMetric = "ratio", trendState = null, loadFilter = "all";
 let distributionWarehouseId = null;
 let powerLimitFilter = "all", detailPowerLimitW = null;
-let meterTrendDataPromise = null, meterTrendState = null;
+let meterTrendState = null;
 let meterTrendRequestVersion = 0;
 const hourCache = new Map();
 const dayTrendCache = new Map();
@@ -203,6 +203,15 @@ function powerGap(row) {
     value: theory - actual,
     over: theory < actual,
   };
+}
+
+function warehouseActualMargin(row) {
+  const theory = warehouseTheoreticalPower(row);
+  const actual = finite(row?.actual_power_kw)
+    ? Number(row.actual_power_kw)
+    : outageInference(row) ? 0 : null;
+  return Number.isFinite(theory) && Number.isFinite(actual)
+    ? theory - actual : null;
 }
 
 function configuredPowerLimit(warehouse) {
@@ -954,7 +963,6 @@ function cardHTML(row) {
       inferred_outage: true,
       actual_power_kw: 0,
       load_ratio: Number.isFinite(theory) && theory > 0 ? 0 : null,
-      available_capacity_kw: Number.isFinite(theory) ? theory : null,
       machine_count: 0,
       power_ratio_overall_w_per_th: null,
       power_ratio_sample_count: 0,
@@ -1209,7 +1217,6 @@ function render() {
   }
   const sort = $("sort").value;
   const sortKey = {
-    available: "available_capacity_kw",
     power: "actual_power_kw",
     meter: "meter_power_kw",
   }[sort];
@@ -1229,8 +1236,12 @@ function render() {
     }
     const aOutage = Boolean(outageInference(a));
     const bOutage = Boolean(outageInference(b));
-    const aValue = aOutage && sort === "power" ? 0 : a[sortKey];
-    const bValue = bOutage && sort === "power" ? 0 : b[sortKey];
+    const aValue = sort === "available"
+      ? warehouseActualMargin(a)
+      : aOutage && sort === "power" ? 0 : a[sortKey];
+    const bValue = sort === "available"
+      ? warehouseActualMargin(b)
+      : bOutage && sort === "power" ? 0 : b[sortKey];
     const aMissing = (a.missing && !aOutage) || !finite(aValue);
     const bMissing = (b.missing && !bOutage) || !finite(bValue);
     if (aMissing !== bMissing) return aMissing ? 1 : -1;
@@ -1393,14 +1404,6 @@ function renderTrend() {
           chartValue: item => item.meterPeakPower,
         },
         {
-          key: "theory",
-          label: "矿箱理论功率",
-          className: "theory",
-          unit: "kW",
-          value: item => item.theoreticalPower,
-          chartValue: item => item.theoreticalPower,
-        },
-        {
           key: "actual",
           label: dailyMode
             ? "当日矿箱平均功率"
@@ -1432,8 +1435,8 @@ function renderTrend() {
   }
   else {
     $("chart-note").textContent = dailyMode
-      ? `近 7 天 · 每天 1 个点 · 矿箱和电表均为当日有效小时平均，理论功率为当日固定值，最大功率为当日电表小时峰值 · kW · 数据时区 ${DATA_TIMEZONE}${incompleteDays ? " · * 存在小时或矿箱缺口" : ""}`
-      : `${selectedDate} 当日逐小时 · 矿箱实际功率为矿机小时平均功耗汇总，电表为每个 UTC 小时实测值，理论功率和当日电表最大功率为整日参考 · kW · 数据时区 ${DATA_TIMEZONE} · 当日覆盖 ${coverageLabel(hours.length)} · 灰色带为数据缺失小时`;
+      ? `近 7 天 · 每天 1 个点 · 矿箱和电表均为当日有效小时平均，最大功率为当日电表小时峰值 · kW · 数据时区 ${DATA_TIMEZONE}${incompleteDays ? " · * 存在小时或矿箱缺口" : ""}`
+      : `${selectedDate} 当日逐小时 · 矿箱实际功率为矿机小时平均功耗汇总，电表为每个 UTC 小时实测值，当日电表最大功率为整日参考 · kW · 数据时区 ${DATA_TIMEZONE} · 当日覆盖 ${coverageLabel(hours.length)} · 灰色带为数据缺失小时`;
   }
   const selectedKey = trendMode === "daily" ? selectedDate : String($("hour").value);
   const allValues = definitions.flatMap(definition =>
@@ -1511,7 +1514,6 @@ function renderTrend() {
   else {
     const meterLabel = dailyMode ? "当日电表平均功率" : "当前小时电表功率";
     const actualLabel = dailyMode ? "当日矿箱平均功率" : "当前小时矿箱实际功率";
-    const theoryLabel = dailyMode ? "矿箱理论功率" : "当前小时理论功率";
     const peakLabel = dailyMode ? "当日电表最大功率" : "当日电表最大功率";
     const periodText = dailyMode
       ? `${selected?.label || ""} · 当日有效小时平均`
@@ -1536,14 +1538,6 @@ function renderTrend() {
           <span class="trend-stat-unit">kW</span>
         </span>
         <span class="trend-stat-context">${esc(peakHourText)}</span>
-      </div>
-      <div class="trend-stat">
-        <span class="trend-stat-label">${theoryLabel}</span>
-        <span class="trend-stat-reading">
-          <span class="trend-stat-value">${fmt(selected?.theoreticalPower)}</span>
-          <span class="trend-stat-unit">kW</span>
-        </span>
-        <span class="trend-stat-context">当日固定配置</span>
       </div>
       <div class="trend-stat">
         <span class="trend-stat-label">${actualLabel}</span>
@@ -1591,8 +1585,8 @@ function renderTrend() {
     const valueText = ratioMode
       ? `矿箱整体功耗比 ${fmtRatio(item.ratio)} W/TH`
       : dailyMode
-        ? `当日电表平均功率 ${fmt(item.meterPower)} kW，当日矿箱平均功率 ${fmt(item.actualPower)} kW，当日电表最大功率 ${fmt(item.meterPeakPower)} kW${finite(item.meterPeakHour) ? `（${hourOnlyLabel(Number(item.meterPeakHour))}）` : ""}，矿箱理论功率 ${fmt(item.theoreticalPower)} kW`
-        : `电表小时实测功率 ${fmt(item.meterPower)} kW，矿箱小时实际功率 ${fmt(item.actualPower)} kW，当日电表最大功率 ${fmt(item.meterPeakPower)} kW${finite(item.meterPeakHour) ? `（${hourOnlyLabel(Number(item.meterPeakHour))}）` : ""}，矿箱理论功率 ${fmt(item.theoreticalPower)} kW`;
+        ? `当日电表平均功率 ${fmt(item.meterPower)} kW，当日矿箱平均功率 ${fmt(item.actualPower)} kW，当日电表最大功率 ${fmt(item.meterPeakPower)} kW${finite(item.meterPeakHour) ? `（${hourOnlyLabel(Number(item.meterPeakHour))}）` : ""}`
+        : `电表小时实测功率 ${fmt(item.meterPower)} kW，矿箱小时实际功率 ${fmt(item.actualPower)} kW，当日电表最大功率 ${fmt(item.meterPeakPower)} kW${finite(item.meterPeakHour) ? `（${hourOnlyLabel(Number(item.meterPeakHour))}）` : ""}`;
     const sampleText = ratioMode
       ? `样本 ${detail.power_ratio_sample_count ?? "—"}/${detail.machine_count ?? "—"}`
       : "";
@@ -1677,9 +1671,8 @@ function showTooltip(event) {
     tooltip.innerHTML = `<span>${esc(dateText)}${esc(coverage)}</span>
       <div class="tooltip-series">
         <span><i style="color:#176b58"></i>${esc(meterLabel)}</span><b>${fmt(item.meterPower)} kW</b>
-        <span><i style="color:#147960"></i>${esc(actualLabel)}</span><b>${fmt(item.actualPower)} kW</b>
+        <span><i style="color:#477b9d"></i>${esc(actualLabel)}</span><b>${fmt(item.actualPower)} kW</b>
         <span><i style="color:#d95836"></i>当日电表最大功率</span><b>${fmt(item.meterPeakPower)} kW${peakHourText}</b>
-        <span><i style="color:#7f8c89"></i>矿箱理论功率</span><b>${fmt(item.theoreticalPower)} kW</b>
       </div>`;
   }
   const x = pad.left + (series.length === 1 ? plotW / 2 : plotW * index / (series.length - 1));
@@ -1808,57 +1801,6 @@ async function fetchGzipJson(url, timeoutMs = 45000) {
   }
 }
 
-function fetchMeterTrendData() {
-  if (!meterTrendDataPromise) {
-    const version = encodeURIComponent(
-      catalog?.data_version || catalog?.exported_at || Date.now(),
-    );
-    meterTrendDataPromise = fetch(`data/supabase_power.json?v=${version}`)
-      .then(response => {
-        if (!response.ok) throw Error("电表数据读取失败");
-        return response.json();
-      })
-      .catch(error => {
-        meterTrendDataPromise = null;
-        throw error;
-      });
-  }
-  return meterTrendDataPromise;
-}
-
-function meterTrendHours(records, siteName, warehouseName, date) {
-  const expectedDate = compactDate(date);
-  const slots = Array.from({ length: expectedHoursPerDay }, () => null);
-  for (const record of records || []) {
-    if (record.site !== siteName || record.warehouse_name !== warehouseName) {
-      continue;
-    }
-    const hourText = String(record.hour ?? "");
-    if (!hourText.startsWith(expectedDate) || hourText.length < 10) continue;
-    const hourIndex = Number(hourText.slice(-2));
-    const meterPower = Number(record.meter_power_kw);
-    if (hourIndex < 0 || hourIndex >= expectedHoursPerDay
-      || !Number.isFinite(meterPower)) continue;
-    const [year, month, day] = date.split("-").map(Number);
-    const exactHourMs = Date.UTC(year, month - 1, day, hourIndex);
-    const recordedAtMs = Date.parse(record.recorded_at);
-    const distance = Number.isFinite(recordedAtMs)
-      ? Math.abs(recordedAtMs - exactHourMs) : Number.POSITIVE_INFINITY;
-    const previous = slots[hourIndex];
-    if (previous && previous.distance <= distance) continue;
-    slots[hourIndex] = {
-      hour: Number(record.hour),
-      hourIndex,
-      meterPower,
-      recordedAt: record.recorded_at,
-      sampleLabel: record.recorded_at
-        ? timestampLabel(record.recorded_at, true) : hourLabel(record.hour),
-      distance,
-    };
-  }
-  return slots;
-}
-
 function loadDayTrend(siteId, date) {
   const cacheKey = `${siteId}/${date}`;
   if (dayTrendCache.has(cacheKey)) return dayTrendCache.get(cacheKey);
@@ -1873,9 +1815,10 @@ function loadDayTrend(siteId, date) {
   return promise;
 }
 
-function actualPowerTrendHours(dayPayload, warehouseId, date) {
+function meterTrendHours(dayPayload, warehouseId, date) {
   const expectedDate = compactDate(date);
   const slots = Array.from({ length: expectedHoursPerDay }, () => null);
+  const [year, month, day] = date.split("-").map(Number);
   for (const row of dayPayload?.warehouse_rows || []) {
     const hourText = String(row.hour ?? "");
     if (row.warehouse_id !== warehouseId
@@ -1883,12 +1826,27 @@ function actualPowerTrendHours(dayPayload, warehouseId, date) {
       continue;
     }
     const hourIndex = Number(hourText.slice(-2));
-    const actualPower = Number(row.actual_power_kw);
+    const meterPower = finite(row.meter_power_kw)
+      ? Number(row.meter_power_kw) : null;
+    const actualPower = finite(row.actual_power_kw)
+      ? Number(row.actual_power_kw) : null;
     if (hourIndex < 0 || hourIndex >= expectedHoursPerDay
-      || !Number.isFinite(actualPower)) continue;
+      || (meterPower == null && actualPower == null)) continue;
+    const exactHourMs = Date.UTC(year, month - 1, day, hourIndex);
+    const recordedAtMs = Date.parse(row.meter_recorded_at);
+    const distance = Number.isFinite(recordedAtMs)
+      ? Math.abs(recordedAtMs - exactHourMs) : Number.POSITIVE_INFINITY;
+    const previous = slots[hourIndex];
+    if (previous && previous.distance <= distance) continue;
     slots[hourIndex] = {
+      hour: Number(row.hour),
       hourIndex,
+      meterPower,
+      recordedAt: row.meter_recorded_at || null,
+      sampleLabel: row.meter_recorded_at
+        ? timestampLabel(row.meter_recorded_at, true) : null,
       actualPower,
+      distance,
     };
   }
   return slots;
@@ -2132,41 +2090,16 @@ function openMeterTrend(warehouseId, warehouseName) {
   renderMeterTrendLoading("正在读取当日电表数据…");
   if (!$("meter-trend").open) $("meter-trend").showModal();
   iconize();
-  Promise.all([
-    fetchMeterTrendData(),
-    loadDayTrend(site.data_center_id, selectedDate).catch(error => {
-      console.warn("矿箱小时实际功率日数据读取失败", error);
-      return null;
-    }),
-  ])
-    .then(([payload, dayPayload]) => {
+  loadDayTrend(site.data_center_id, selectedDate)
+    .then(dayPayload => {
       if (requestVersion !== meterTrendRequestVersion || !$("meter-trend").open) {
         return;
       }
-      const meterHours = meterTrendHours(
-        payload.records,
-        meterTrendState.siteName,
-        meterTrendState.warehouseName,
-        meterTrendState.date,
-      );
-      const actualHours = actualPowerTrendHours(
+      const hours = meterTrendHours(
         dayPayload,
         meterTrendState.warehouseId,
         meterTrendState.date,
       );
-      const hours = meterHours.map((meterPoint, hourIndex) => {
-        const actualPoint = actualHours[hourIndex];
-        if (!meterPoint && !actualPoint) return null;
-        return {
-          hour: meterPoint?.hour
-            ?? Number(`${compactDate(meterTrendState.date)}${String(hourIndex).padStart(2, "0")}`),
-          hourIndex,
-          meterPower: meterPoint?.meterPower ?? null,
-          recordedAt: meterPoint?.recordedAt ?? null,
-          sampleLabel: meterPoint?.sampleLabel ?? null,
-          actualPower: actualPoint?.actualPower ?? null,
-        };
-      });
       const meterPoints = hours.filter(point => finite(point?.meterPower));
       const actualPoints = hours.filter(point => finite(point?.actualPower));
       const peakPoint = meterPoints.reduce((best, point) =>
