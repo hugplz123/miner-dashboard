@@ -2313,10 +2313,10 @@ function renderDetailSummary(row) {
           : "按去重 IP 与算力组统计",
       },
       {
-        label: "矿箱小时平均温度 / 最高温度",
+        label: "矿箱内矿机小时平均温度 / 最高温度",
         value: `${fmt(row.temperature_avg_c)} / ${fmt(row.temperature_max_c)}`,
         unit: "°C",
-        note: "矿机内温度，单位 °C",
+        note: "矿箱内矿机温度，单位 °C",
       },
       {
         label: "矿箱小时平均拒绝率 / 最高拒绝率",
