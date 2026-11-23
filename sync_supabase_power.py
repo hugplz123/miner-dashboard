@@ -158,7 +158,11 @@ def deduplicate_rows(raw_rows, start, end_exclusive):
     by_key = {}
     closest_distance_by_key = {}
     ignored = 0
+    invalid_power = 0
     for raw in raw_rows:
+        if raw.get("total_active_power") is None:
+            invalid_power += 1
+            continue
         try:
             bucket = parse_timestamp(raw.get("hour_bucket"), "hour_bucket")
             recorded_at = parse_timestamp(
@@ -210,7 +214,7 @@ def deduplicate_rows(raw_rows, start, end_exclusive):
             item["site"].casefold(), item["hour"], item["warehouse_name"]
         ),
     )
-    return records, ignored
+    return records, ignored, invalid_power
 
 
 def coverage_summary(records, dates):
@@ -271,7 +275,7 @@ def sync(
     )
     base_url, key = load_env(env_path)
     raw_rows = fetch_rows(base_url, key, start, end_exclusive)
-    records, ignored = deduplicate_rows(
+    records, ignored, invalid_power = deduplicate_rows(
         raw_rows, start, end_exclusive
     )
     if not records:
@@ -292,7 +296,10 @@ def sync(
         "raw_record_count": len(raw_rows),
         "record_count": len(records),
         "ignored_out_of_range_count": ignored,
-        "duplicate_count": max(0, len(raw_rows) - ignored - len(records)),
+        "invalid_power_count": invalid_power,
+        "duplicate_count": max(
+            0, len(raw_rows) - ignored - invalid_power - len(records)
+        ),
         "coverage": coverage_summary(records, dates),
         "records": records,
     }

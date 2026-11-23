@@ -1896,16 +1896,14 @@ async function verifyBrowser(catalog) {
     const meterOnlyNames = await page.locator(
       ".warehouse-card.meter-only-card .card-title strong",
     ).allTextContents();
-    assert.deepEqual(meterOnlyNames.sort(), ["C12", "C26"]);
-    for (const warehouseName of ["C12", "C26"]) {
+    assert.deepEqual(meterOnlyNames.sort(), ["C12"]);
+    for (const warehouseName of ["C12"]) {
       const card = page.locator(".warehouse-card.meter-only-card").filter({
         hasText: warehouseName,
       });
       const text = await card.textContent();
       assert(text.includes("矿机小时数据缺失"));
-      assert(text.includes(
-        warehouseName === "C12" ? "0/24 小时" : "18/24 小时",
-      ));
+      assert(text.includes("0/24 小时"));
       assert(!text.includes("停电推断"));
     }
 
