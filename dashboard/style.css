@@ -510,6 +510,7 @@ main.is-loading #metrics, main.is-loading .trend, main.is-loading .warehouse-gri
   color: #506a63; background: #eef4f1; border-radius: 3px; padding: 2px 6px;
   font-size: 9px; font-style: normal; white-space: nowrap;
 }
+.reporting.ok { color: #2d725f; background: #e8f4ef; }
 .reporting.warn { color: #875c15; background: #fbf0d8; }
 .power-line { display: flex; align-items: flex-end; justify-content: space-between; gap: 10px; margin-top: 3px; }
 .actual-power { font-size: 30px; font-weight: 680; font-variant-numeric: tabular-nums; line-height: 1; white-space: nowrap; }

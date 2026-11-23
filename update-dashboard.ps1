@@ -11,7 +11,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 Set-Location -LiteralPath $PSScriptRoot
-$PendingDetailDates = "20261120,20261121"
+$PendingDetailDates = ""
 $DetailSites = @("Nimrod01", "Nimrod02", "WhiteOak01", "May01", "Blossom01")
 
 function Resolve-Git {

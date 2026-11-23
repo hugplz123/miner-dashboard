@@ -1091,8 +1091,11 @@ function cardHTML(row) {
   const loadPercent = hasTheory
     ? Math.max(0, Math.min(100, Number(row.load_ratio) * 100)) : null;
   const installedMachines = row.lark_power?.mounted_machine_count;
-  const reportingIncomplete = !outage && finite(installedMachines)
-    && Number(installedMachines) > Number(row.machine_count);
+  const reportingMismatch = finite(installedMachines)
+    && Number(installedMachines) !== Number(row.machine_count);
+  const reportingBadge = finite(installedMachines)
+    ? `<span class="reporting ${reportingMismatch ? "warn" : "ok"}">上报 ${row.machine_count}/${installedMachines} 台</span>`
+    : "";
   const statusText = meterOnly
     ? "矿机小时数据缺失"
     : loadClassLabel(classification, row);
@@ -1122,9 +1125,7 @@ function cardHTML(row) {
         ? `<span class="inferred-outage-badge">停电推断</span>`
         : !machineDataAvailable
           ? `<span class="reporting meter-only">矿机数据未采集</span>`
-        : reportingIncomplete
-          ? `<span class="reporting warn">上报 ${row.machine_count}/${installedMachines} 台</span>`
-          : ""}</div>
+          : ""}${reportingBadge}</div>
       <div class="power-line">
         <span class="actual-power${machineDataAvailable ? "" : " unavailable"}">${machineDataAvailable ? fmt(row.actual_power_kw) : "—"}${machineDataAvailable ? "<small>kW</small>" : ""}</span>
         ${!machineDataAvailable
