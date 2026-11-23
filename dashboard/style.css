@@ -740,6 +740,20 @@ dialog::backdrop { background: #1d302d66; }
 .dialog-head button svg { width: 17px; height: 17px; }
 .dialog-head h2 { font-size: 21px; }
 .dialog-head p { margin: 6px 0 17px; font-size: 12px; }
+#detail > .dialog-head { padding-right: 50px; }
+#detail > #close {
+  position: sticky;
+  top: 8px;
+  z-index: 30;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  margin: 0 0 -36px auto;
+  background: #fff;
+  box-shadow: 0 1px 4px #1d302d24;
+}
 .coverage-dialog { width: min(980px, 94vw); }
 .coverage-dialog-summary {
   display: grid; grid-template-columns: repeat(3, minmax(0, 1fr));
