@@ -5,11 +5,14 @@ param(
     [switch]$NoPublish,
     [switch]$SkipVerify,
     [switch]$Refresh,
-    [switch]$BackfillDetails
+    [switch]$BackfillDetails,
+    [string]$DetailDates = ""
 )
 
 $ErrorActionPreference = "Stop"
 Set-Location -LiteralPath $PSScriptRoot
+$PendingDetailDates = "20261120,20261121"
+$DetailSites = @("Nimrod01", "Nimrod02", "WhiteOak01", "May01", "Blossom01")
 
 function Resolve-Git {
     $command = Get-Command git.exe -ErrorAction SilentlyContinue
@@ -39,20 +42,69 @@ function Push-Dashboard($git) {
     throw "Dashboard was committed locally, but git push failed."
 }
 
+function Resolve-DetailDatesToExport(
+    [string]$manualDates,
+    [string]$pendingDates,
+    [datetime]$endDate,
+    [int]$days
+) {
+    $windowStart = $endDate.Date.AddDays(-($days - 1))
+    $windowEnd = $endDate.Date
+    $sources = @()
+    if ($manualDates) { $sources += $manualDates }
+    if ($pendingDates) { $sources += $pendingDates }
+    $resolved = @()
+    foreach ($source in $sources) {
+        foreach ($item in ([string]$source -split ",")) {
+            $dateKey = $item.Trim()
+            if (-not $dateKey) { continue }
+            try {
+                $parsedDate = [datetime]::ParseExact(
+                    $dateKey, "yyyyMMdd",
+                    [Globalization.CultureInfo]::InvariantCulture
+                ).Date
+            }
+            catch {
+                throw "DetailDates must use YYYYMMDD, for example 20261120."
+            }
+            if ($parsedDate -lt $windowStart -or $parsedDate -gt $windowEnd) {
+                Write-Host "Skip detail date $dateKey because it is outside the rolling window." `
+                    -ForegroundColor Yellow
+                continue
+            }
+            $missingDetail = $false
+            foreach ($site in $DetailSites) {
+                $detailFile = Join-Path $PSScriptRoot (
+                    "outputs\detail-cache\{0}\{1}_{0}_dashboard.json" -f
+                    $dateKey, $site.ToLowerInvariant()
+                )
+                if (-not (Test-Path -LiteralPath $detailFile)) {
+                    $missingDetail = $true
+                    break
+                }
+            }
+            if ($missingDetail) { $resolved += $dateKey }
+        }
+    }
+    return @($resolved | Sort-Object -Unique)
+}
+
 # Refresh and archive the public Lark capacity snapshot for the completed day.
 if ($Date) {
     try {
-        $snapshotDate = [datetime]::ParseExact(
-            $Date, "yyyyMMdd", $null
-        ).ToString("yyyy-MM-dd")
+        $endDate = [datetime]::ParseExact(
+            $Date, "yyyyMMdd",
+            [Globalization.CultureInfo]::InvariantCulture
+        ).Date
     }
     catch {
         throw "Date must use YYYYMMDD, for example 20261108."
     }
 }
 else {
-    $snapshotDate = [DateTime]::UtcNow.Date.AddDays(-1).ToString("yyyy-MM-dd")
+    $endDate = [DateTime]::UtcNow.Date.AddDays(-1)
 }
+$snapshotDate = $endDate.ToString("yyyy-MM-dd")
 
 & python sync_lark_model_levels.py
 if ($LASTEXITCODE -ne 0) {
@@ -108,6 +160,14 @@ if ($Refresh) {
 }
 if ($BackfillDetails) {
     $arguments += "--backfill-details"
+}
+$detailDatesToExport = Resolve-DetailDatesToExport `
+    $DetailDates $PendingDetailDates $endDate $Days
+if ($detailDatesToExport.Count) {
+    $detailDateArgument = $detailDatesToExport -join ","
+    Write-Host "Queued full detail for: $detailDateArgument" `
+        -ForegroundColor Cyan
+    $arguments += @("--detail-dates", $detailDateArgument)
 }
 
 & python @arguments

@@ -4,6 +4,7 @@ import datetime as dt
 import gzip
 import json
 import shutil
+import time
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -15,6 +16,17 @@ from sample_export import DEFAULT_THEORETICAL_POWER_PATH, SITES, export
 
 def parse_date(value):
     return dt.datetime.strptime(value, "%Y%m%d").date()
+
+
+def parse_date_keys(value):
+    if not value:
+        return set()
+    keys = set()
+    for token in value.split(","):
+        token = token.strip()
+        if token:
+            keys.add(parse_date(token).strftime("%Y%m%d"))
+    return keys
 
 
 def recent_dates(end_date, days):
@@ -152,10 +164,17 @@ def import_published_days(destination, summary_root, dates):
 def run(config, end_date, days, summary_root, detail_root, destination,
         skip_existing=False, theoretical_power=DEFAULT_THEORETICAL_POWER_PATH,
         jobs=1, preserve_destination=False, published_base_url=None,
-        refresh_latest=False, backfill_details=False):
+        refresh_latest=False, backfill_details=False, detail_dates=None):
     dates = recent_dates(end_date, days)
     date_keys = {date.strftime("%Y%m%d") for date in dates}
     latest_key = dates[-1].strftime("%Y%m%d")
+    detail_dates = set(detail_dates or ())
+    outside_window = detail_dates - date_keys
+    if outside_window:
+        raise ValueError(
+            "Requested detail dates are outside the rolling window: "
+            + ", ".join(sorted(outside_window))
+        )
 
     if published_base_url:
         download_published_assets(published_base_url, dates, destination)
@@ -166,7 +185,19 @@ def run(config, end_date, days, summary_root, detail_root, destination,
     for date in dates:
         date_key = date.strftime("%Y%m%d")
         latest = date_key == latest_key
-        full_detail = latest or backfill_details
+        missing_summary = any(
+            not (
+                summary_root / date_key
+                / f"{site.lower()}_{date_key}_warehouse_dashboard.json"
+            ).exists()
+            for site in SITES
+        )
+        full_detail = (
+            latest
+            or backfill_details
+            or date_key in detail_dates
+            or missing_summary
+        )
         for site in sorted(SITES):
             summary_path = (
                 summary_root / date_key
@@ -187,6 +218,9 @@ def run(config, end_date, days, summary_root, detail_root, destination,
 
     def run_task(task):
         date_key, full_detail, site = task
+        mode = "detail" if full_detail else "summary"
+        started_at = time.perf_counter()
+        print(f"Started {site} {date_key} ({mode})", flush=True)
         output_dir = (
             detail_root / date_key if full_detail else summary_root / date_key
         )
@@ -208,18 +242,28 @@ def run(config, end_date, days, summary_root, detail_root, destination,
                 destination_dir
                 / f"{site.lower()}_{date_key}_warehouse_dashboard.json",
             )
-        return date_key, site
+        return date_key, site, full_detail, time.perf_counter() - started_at
 
     if jobs <= 1:
         for task in tasks:
-            run_task(task)
+            date_key, site, full_detail, elapsed = run_task(task)
+            mode = "detail" if full_detail else "summary"
+            print(
+                f"Completed {site} {date_key} ({mode}) in {elapsed:.1f}s",
+                flush=True,
+            )
     else:
         with ThreadPoolExecutor(max_workers=jobs) as executor:
             pending = {executor.submit(run_task, task): task for task in tasks}
             try:
                 for future in as_completed(pending):
-                    date_key, site = future.result()
-                    print(f"Completed {site} {date_key}", flush=True)
+                    date_key, site, full_detail, elapsed = future.result()
+                    mode = "detail" if full_detail else "summary"
+                    print(
+                        f"Completed {site} {date_key} ({mode}) "
+                        f"in {elapsed:.1f}s",
+                        flush=True,
+                    )
             except Exception:
                 for future in pending:
                     future.cancel()
@@ -279,6 +323,13 @@ def main():
         ),
     )
     parser.add_argument(
+        "--detail-dates",
+        help=(
+            "Comma-separated YYYYMMDD dates to export with full machine "
+            "detail inside the rolling window"
+        ),
+    )
+    parser.add_argument(
         "--jobs", type=int, default=1,
         help="Number of site/date exports to run concurrently",
     )
@@ -314,6 +365,7 @@ def main():
         args.published_base_url,
         args.refresh_latest,
         args.backfill_details,
+        parse_date_keys(args.detail_dates),
     )
 
 

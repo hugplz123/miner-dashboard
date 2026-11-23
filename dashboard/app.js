@@ -505,6 +505,87 @@ function coverageParts(daily, site = currentSite()) {
   return { observed, expected, completeWarehouses, totalWarehouses };
 }
 
+function hourCoverageLabel(hour) {
+  return `${String(hour).slice(-2)}:00`;
+}
+
+function incompleteWarehouseRows(site = currentSite(), date = selectedDate) {
+  if (!site) return [];
+  const daily = dailyFor(date, site);
+  const expected = Number(daily?.expected_hours ?? expectedHoursPerDay)
+    || expectedHoursPerDay;
+  const coverage = site.warehouse_hours_by_date?.[date] || {};
+  const datePrefix = compactDate(date);
+  return warehouses
+    .filter(warehouse => warehouse.data_center_id === site.data_center_id)
+    .map(warehouse => {
+      const recordedHours = Array.isArray(coverage[warehouse.warehouse_id])
+        ? [...new Set(coverage[warehouse.warehouse_id].map(Number))]
+        : [];
+      const coveredHours = new Set(recordedHours);
+      const missingHours = Array.from({ length: expected }, (_, index) =>
+        Number(`${datePrefix}${String(index).padStart(2, "0")}`)
+      ).filter(hour => !coveredHours.has(hour));
+      return {
+        ...warehouse,
+        observedHours: expected - missingHours.length,
+        expectedHours: expected,
+        missingHours,
+      };
+    })
+    .filter(warehouse => warehouse.missingHours.length > 0)
+    .sort((left, right) =>
+      left.observedHours - right.observedHours
+      || left.warehouse_name.localeCompare(
+        right.warehouse_name, undefined, { numeric: true },
+      )
+    );
+}
+
+function missingHoursHTML(warehouse) {
+  if (warehouse.missingHours.length === warehouse.expectedHours) {
+    return `<span class="coverage-missing-range">${hourCoverageLabel(
+      warehouse.missingHours[0],
+    )} 至 ${hourCoverageLabel(
+      warehouse.missingHours.at(-1),
+    )}，缺失全部 ${warehouse.expectedHours} 小时</span>`;
+  }
+  return warehouse.missingHours
+    .map(hour => `<span class="coverage-missing-hour">${hourCoverageLabel(hour)}</span>`)
+    .join("");
+}
+
+function openCoverageDialog() {
+  const site = currentSite();
+  const daily = dailyFor(selectedDate, site);
+  const { completeWarehouses, totalWarehouses } = coverageParts(daily, site);
+  const incomplete = incompleteWarehouseRows(site, selectedDate);
+  const partial = incomplete.filter(warehouse => warehouse.observedHours > 0);
+  const noData = incomplete.filter(warehouse => warehouse.observedHours === 0);
+  $("coverage-dialog-title").textContent = `${site?.data_center_name || ""} · 矿箱完整性`;
+  $("coverage-dialog-meta").textContent =
+    `${selectedDate} · ${DATA_TIMEZONE} · 完整矿箱 ${completeWarehouses ?? "—"}/${totalWarehouses ?? "—"} · `
+    + "按矿机小时数据覆盖判定；0 小时表示当日无数据";
+  $("coverage-dialog-summary").innerHTML = `
+    <div><span>完整矿箱</span><strong>${esc(completeWarehouses ?? "—")}/${esc(totalWarehouses ?? "—")}</strong></div>
+    <div><span>部分小时缺失</span><strong>${fmt(partial.length, 0)}</strong></div>
+    <div><span>当日无数据</span><strong>${fmt(noData.length, 0)}</strong></div>`;
+  $("coverage-dialog-content").innerHTML = incomplete.length
+    ? `<div class="coverage-warehouse-grid">${incomplete.map(warehouse => `
+        <article class="coverage-warehouse-item" data-state="${warehouse.observedHours ? "partial" : "empty"}">
+          <div class="coverage-warehouse-head">
+            <strong>${esc(warehouse.warehouse_name)}</strong>
+            <span>${warehouse.observedHours}/${warehouse.expectedHours} 小时</span>
+            <em>${warehouse.observedHours ? "部分小时缺失" : "当日无数据"}</em>
+          </div>
+          <p>缺失 UTC 小时</p>
+          <div class="coverage-missing-hours">${missingHoursHTML(warehouse)}</div>
+        </article>`).join("")}</div>`
+    : `<div class="coverage-all-complete"><i data-lucide="circle-check"></i><strong>全部矿箱数据完整</strong><span>${selectedDate} 的 ${totalWarehouses ?? "—"} 个矿箱均覆盖 ${daily?.expected_hours ?? expectedHoursPerDay} 小时。</span></div>`;
+  $("coverage-dialog").showModal();
+  iconize();
+}
+
 function siteCoverageLabel(daily, site = currentSite()) {
   const { observed, expected, completeWarehouses, totalWarehouses } =
     coverageParts(daily, site);
@@ -724,13 +805,14 @@ function renderCoverage(daily, site, lark) {
   const expected = daily?.expected_hours ?? expectedHoursPerDay;
   const observed = daily?.hours_with_data ?? daily?.hours?.length ?? hours.length;
   const { completeWarehouses, totalWarehouses } = coverageParts(daily, site);
+  const incompleteWarehouses = incompleteWarehouseRows(site, selectedDate);
   const partialWarehouses = daily?.incomplete_warehouse_count || 0;
   const warehousesWithoutData = daily?.warehouses_without_data || 0;
   const minimumHours = daily?.min_warehouse_hours;
   const complete = daily?.is_fully_complete
     ?? (observed === expected && partialWarehouses === 0);
   const details = [
-    `${selectedDate} 场地 ${coverageLabel(observed, expected)}有数据，${completeWarehouses}/${totalWarehouses} 个矿箱完整。`,
+    `${selectedDate} 场地 ${coverageLabel(observed, expected)}有数据。`,
   ];
   if (partialWarehouses) {
     details.push(
@@ -755,9 +837,22 @@ function renderCoverage(daily, site, lark) {
     complete ? "complete" : "incomplete"
   }`;
   element.dataset.complete = complete ? "true" : "false";
-  element.innerHTML = `<strong>${
-    complete ? "数据完整" : "数据不完整"
-  }</strong><span>${esc(site.data_center_name)} · 数据时区 ${DATA_TIMEZONE} · ${esc(details.join(" "))}</span>`;
+  element.innerHTML = `
+    <div class="coverage-copy">
+      <strong>${complete ? "数据完整" : "数据不完整"}</strong>
+      <span>${esc(site.data_center_name)} · 数据时区 ${DATA_TIMEZONE} · ${esc(details.join(" "))}</span>
+    </div>
+    <div class="coverage-actions">
+      <div class="coverage-ratio">
+        <span>完整矿箱</span>
+        <strong>${esc(completeWarehouses ?? "—")}/${esc(totalWarehouses ?? "—")}</strong>
+      </div>
+      <button type="button" class="coverage-detail-button" data-open-coverage aria-haspopup="dialog" title="查看不完整矿箱及缺失小时">
+        ${incompleteWarehouses.length ? "查看不完整矿箱" : "查看完整性"}
+        ${incompleteWarehouses.length ? `<b>${fmt(incompleteWarehouses.length, 0)}</b>` : ""}
+        <i data-lucide="list-checks"></i>
+      </button>
+    </div>`;
 }
 
 function larkPanelHTML(row) {
@@ -2599,6 +2694,7 @@ $("hour").onchange = async () => {
 };
 $("date").onchange = async () => {
   if ($("distribution").open) $("distribution").close();
+  if ($("coverage-dialog").open) $("coverage-dialog").close();
   if ($("detail").open) {
     $("detail").close();
     requestVersion++;
@@ -2608,6 +2704,7 @@ $("date").onchange = async () => {
 };
 $("site").onchange = async () => {
   if ($("distribution").open) $("distribution").close();
+  if ($("coverage-dialog").open) $("coverage-dialog").close();
   if ($("detail").open) {
     $("detail").close();
     requestVersion++;
@@ -2621,6 +2718,9 @@ document.querySelectorAll('input[name="sort-order"]').forEach(input => {
   input.onchange = render;
 });
 $("search").oninput = render;
+$("coverage").onclick = event => {
+  if (event.target.closest("[data-open-coverage]")) openCoverageDialog();
+};
 document.querySelectorAll("[data-load-filter]").forEach(button => {
   button.onclick = () => {
     loadFilter = button.dataset.loadFilter;
@@ -2682,6 +2782,10 @@ $("distribution-detail").onclick = () => {
   openDetail(id);
 };
 $("meter-trend-close").onclick = closeMeterTrend;
+$("coverage-dialog-close").onclick = () => $("coverage-dialog").close();
+$("coverage-dialog").addEventListener("click", event => {
+  if (event.target === $("coverage-dialog")) $("coverage-dialog").close();
+});
 function hoverMeterTrendHourFromChart(target) {
   if (!meterTrendState?.hours || !target) return;
   const hourIndex = Number(target.dataset.meterTrendHour);

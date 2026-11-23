@@ -1543,13 +1543,54 @@ async function verifyBrowser(catalog) {
     assert((await page.locator("#coverage").textContent()).includes(
       `场地 ${latestDaily.hours_with_data}/${latestDaily.expected_hours} 小时有数据`
     ));
-    assert((await page.locator("#coverage").textContent()).includes(
-      `${latestDaily.complete_warehouse_count}/${latestDaily.warehouse_count} 个矿箱完整`
-    ));
+    assert.equal(
+      (await page.locator(".coverage-ratio").innerText())
+        .replace(/\s+/g, " ").trim(),
+      `完整矿箱 ${latestDaily.complete_warehouse_count}/${latestDaily.warehouse_count}`,
+    );
     const expectedCoverageWarnings = latestDaily.incomplete_warehouse_count
       + latestDaily.warehouses_without_data;
     assert.equal(await page.locator(".card-coverage.incomplete").count(),
       expectedCoverageWarnings);
+    await page.locator("[data-open-coverage]").click();
+    const coverageDialog = page.locator("#coverage-dialog");
+    assert(await coverageDialog.isVisible());
+    assert((await page.locator("#coverage-dialog-meta").textContent()).includes(
+      `完整矿箱 ${latestDaily.complete_warehouse_count}/${latestDaily.warehouse_count}`
+    ));
+    assert.equal(
+      await coverageDialog.locator(
+        ".coverage-warehouse-item[data-state='partial']",
+      ).count(),
+      latestDaily.incomplete_warehouse_count,
+    );
+    assert.equal(
+      await coverageDialog.locator(
+        ".coverage-warehouse-item[data-state='empty']",
+      ).count(),
+      latestDaily.warehouses_without_data,
+    );
+    if (latestDaily.warehouses_without_data) {
+      const emptyWarehouse = coverageDialog.locator(
+        ".coverage-warehouse-item[data-state='empty']",
+      ).first();
+      assert((await emptyWarehouse.textContent()).includes(
+        `0/${latestDaily.expected_hours} 小时`
+      ));
+      assert((await emptyWarehouse.textContent()).includes("当日无数据"));
+      assert.equal(
+        await emptyWarehouse.locator(".coverage-missing-range").count(),
+        1,
+      );
+    }
+    await page.screenshot({
+      path: path.join(
+        ROOT, "outputs", "dashboard-check", "coverage-dialog.png",
+      ),
+      clip: { x: 0, y: 0, width: 1440, height: 1000 },
+    });
+    await page.locator("#coverage-dialog-close").click();
+    assert(!(await coverageDialog.isVisible()));
 
     await page.locator("[data-trend-mode='hourly']").click();
     assert((await page.locator("#trend-title").textContent()).includes(
