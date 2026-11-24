@@ -1,0 +1,877 @@
+{
+  "schema_version": "1.0",
+  "record_schema": "running_power_v2",
+  "source": "lark_bitable",
+  "base_token": "VuLLbn5bNaIWkoswngWlyEOygof",
+  "table_id": "tblyqTYhjiXE0kaA",
+  "view_id": "vewApv1ihH",
+  "snapshot_date": "2026-11-23",
+  "synced_at": "2026-11-24T02:05:58.686951+00:00",
+  "record_count": 96,
+  "records": [
+    {
+      "site": "Blossom01",
+      "warehouse_number": 1,
+      "container_code": "US-BLOSSOM-01-C1",
+      "project_code": "US-BLOSSOM-01",
+      "running_power_kw": 908.393399999999,
+      "running_machine_count": 239,
+      "total_slots": 240
+    },
+    {
+      "site": "Blossom01",
+      "warehouse_number": 2,
+      "container_code": "US-BLOSSOM-01-C2",
+      "project_code": "US-BLOSSOM-01",
+      "running_power_kw": 913.817000000001,
+      "running_machine_count": 239,
+      "total_slots": 240
+    },
+    {
+      "site": "Blossom01",
+      "warehouse_number": 3,
+      "container_code": "US-BLOSSOM-01-C3",
+      "project_code": "US-BLOSSOM-01",
+      "running_power_kw": 906.963,
+      "running_machine_count": 239,
+      "total_slots": 240
+    },
+    {
+      "site": "Blossom01",
+      "warehouse_number": 4,
+      "container_code": "US-BLOSSOM-01-C4",
+      "project_code": "US-BLOSSOM-01",
+      "running_power_kw": 910.240999999999,
+      "running_machine_count": 240,
+      "total_slots": 240
+    },
+    {
+      "site": "Blossom01",
+      "warehouse_number": 5,
+      "container_code": "US-BLOSSOM-01-C5",
+      "project_code": "US-BLOSSOM-01",
+      "running_power_kw": 912.2972,
+      "running_machine_count": 240,
+      "total_slots": 240
+    },
+    {
+      "site": "Blossom01",
+      "warehouse_number": 6,
+      "container_code": "US-BLOSSOM-01-C6",
+      "project_code": "US-BLOSSOM-01",
+      "running_power_kw": 904.817399999999,
+      "running_machine_count": 239,
+      "total_slots": 240
+    },
+    {
+      "site": "Blossom01",
+      "warehouse_number": 7,
+      "container_code": "US-BLOSSOM-01-C7",
+      "project_code": "US-BLOSSOM-01",
+      "running_power_kw": 919.3002,
+      "running_machine_count": 240,
+      "total_slots": 240
+    },
+    {
+      "site": "Blossom01",
+      "warehouse_number": 8,
+      "container_code": "US-BLOSSOM-01-C8",
+      "project_code": "US-BLOSSOM-01",
+      "running_power_kw": 912.922999999999,
+      "running_machine_count": 240,
+      "total_slots": 240
+    },
+    {
+      "site": "Blossom01",
+      "warehouse_number": 9,
+      "container_code": "US-BLOSSOM-01-C9",
+      "project_code": "US-BLOSSOM-01",
+      "running_power_kw": 917.571799999999,
+      "running_machine_count": 240,
+      "total_slots": 240
+    },
+    {
+      "site": "Blossom01",
+      "warehouse_number": 10,
+      "container_code": "US-BLOSSOM-01-C10",
+      "project_code": "US-BLOSSOM-01",
+      "running_power_kw": 911.3138,
+      "running_machine_count": 240,
+      "total_slots": 240
+    },
+    {
+      "site": "May01",
+      "warehouse_number": 1,
+      "container_code": "US-MAY-01-C1",
+      "project_code": "US-MAY-01",
+      "running_power_kw": 930.7434,
+      "running_machine_count": 240,
+      "total_slots": 240
+    },
+    {
+      "site": "May01",
+      "warehouse_number": 2,
+      "container_code": "US-MAY-01-C2",
+      "project_code": "US-MAY-01",
+      "running_power_kw": 930.9818,
+      "running_machine_count": 240,
+      "total_slots": 240
+    },
+    {
+      "site": "May01",
+      "warehouse_number": 3,
+      "container_code": "US-MAY-01-C3",
+      "project_code": "US-MAY-01",
+      "running_power_kw": 931.1606,
+      "running_machine_count": 240,
+      "total_slots": 240
+    },
+    {
+      "site": "May01",
+      "warehouse_number": 4,
+      "container_code": "US-MAY-01-C4",
+      "project_code": "US-MAY-01",
+      "running_power_kw": 920.8796,
+      "running_machine_count": 240,
+      "total_slots": 240
+    },
+    {
+      "site": "May01",
+      "warehouse_number": 5,
+      "container_code": "US-MAY-01-C5",
+      "project_code": "US-MAY-01",
+      "running_power_kw": 921.4756,
+      "running_machine_count": 240,
+      "total_slots": 240
+    },
+    {
+      "site": "May01",
+      "warehouse_number": 6,
+      "container_code": "US-MAY-01-C6",
+      "project_code": "US-MAY-01",
+      "running_power_kw": 927.554799999999,
+      "running_machine_count": 240,
+      "total_slots": 240
+    },
+    {
+      "site": "May01",
+      "warehouse_number": 7,
+      "container_code": "US-MAY-01-C7",
+      "project_code": "US-MAY-01",
+      "running_power_kw": 908.184800000001,
+      "running_machine_count": 240,
+      "total_slots": 240
+    },
+    {
+      "site": "May01",
+      "warehouse_number": 8,
+      "container_code": "US-MAY-01-C8",
+      "project_code": "US-MAY-01",
+      "running_power_kw": 896.562799999999,
+      "running_machine_count": 240,
+      "total_slots": 240
+    },
+    {
+      "site": "May01",
+      "warehouse_number": 9,
+      "container_code": "US-MAY-01-C9",
+      "project_code": "US-MAY-01",
+      "running_power_kw": 909.168200000001,
+      "running_machine_count": 240,
+      "total_slots": 240
+    },
+    {
+      "site": "May01",
+      "warehouse_number": 10,
+      "container_code": "US-MAY-01-C10",
+      "project_code": "US-MAY-01",
+      "running_power_kw": 918.733999999999,
+      "running_machine_count": 240,
+      "total_slots": 240
+    },
+    {
+      "site": "May01",
+      "warehouse_number": 11,
+      "container_code": "US-MAY-01-C11",
+      "project_code": "US-MAY-01",
+      "running_power_kw": 921.0882,
+      "running_machine_count": 240,
+      "total_slots": 240
+    },
+    {
+      "site": "May01",
+      "warehouse_number": 12,
+      "container_code": "US-MAY-01-C12",
+      "project_code": "US-MAY-01",
+      "running_power_kw": 915.038799999999,
+      "running_machine_count": 240,
+      "total_slots": 240
+    },
+    {
+      "site": "Nimrod01",
+      "warehouse_number": 1,
+      "container_code": "US-NIMROD-01-C1",
+      "project_code": "US-NIMROD-01",
+      "running_power_kw": 435.970199999999,
+      "running_machine_count": 156,
+      "total_slots": 189
+    },
+    {
+      "site": "Nimrod01",
+      "warehouse_number": 2,
+      "container_code": "US-NIMROD-01-C2",
+      "project_code": "US-NIMROD-01",
+      "running_power_kw": 100.7532,
+      "running_machine_count": 32,
+      "total_slots": 189
+    },
+    {
+      "site": "Nimrod01",
+      "warehouse_number": 3,
+      "container_code": "US-NIMROD-01-C3",
+      "project_code": "US-NIMROD-01",
+      "running_power_kw": 474.605,
+      "running_machine_count": 175,
+      "total_slots": 189
+    },
+    {
+      "site": "Nimrod01",
+      "warehouse_number": 4,
+      "container_code": "US-NIMROD-01-C4",
+      "project_code": "US-NIMROD-01",
+      "running_power_kw": 435.85,
+      "running_machine_count": 161,
+      "total_slots": 189
+    },
+    {
+      "site": "Nimrod01",
+      "warehouse_number": 5,
+      "container_code": "US-NIMROD-01-C5",
+      "project_code": "US-NIMROD-01",
+      "running_power_kw": 479.205,
+      "running_machine_count": 177,
+      "total_slots": 189
+    },
+    {
+      "site": "Nimrod01",
+      "warehouse_number": 6,
+      "container_code": "US-NIMROD-01-C6",
+      "project_code": "US-NIMROD-01",
+      "running_power_kw": 475.64,
+      "running_machine_count": 175,
+      "total_slots": 189
+    },
+    {
+      "site": "Nimrod01",
+      "warehouse_number": 7,
+      "container_code": "US-NIMROD-01-C7",
+      "project_code": "US-NIMROD-01",
+      "running_power_kw": 400.226399999999,
+      "running_machine_count": 108,
+      "total_slots": 189
+    },
+    {
+      "site": "Nimrod01",
+      "warehouse_number": 8,
+      "container_code": "US-NIMROD-01-C8",
+      "project_code": "US-NIMROD-01",
+      "running_power_kw": 175.569,
+      "running_machine_count": 60,
+      "total_slots": 189
+    },
+    {
+      "site": "Nimrod01",
+      "warehouse_number": 9,
+      "container_code": "US-NIMROD-01-C9",
+      "project_code": "US-NIMROD-01",
+      "running_power_kw": 129.6235,
+      "running_machine_count": 44,
+      "total_slots": 189
+    },
+    {
+      "site": "Nimrod01",
+      "warehouse_number": 10,
+      "container_code": "US-NIMROD-01-C10",
+      "project_code": "US-NIMROD-01",
+      "running_power_kw": 84.6025,
+      "running_machine_count": 29,
+      "total_slots": 189
+    },
+    {
+      "site": "Nimrod01",
+      "warehouse_number": 11,
+      "container_code": "US-NIMROD-01-C11",
+      "project_code": "US-NIMROD-01",
+      "running_power_kw": 386.6302,
+      "running_machine_count": 107,
+      "total_slots": 189
+    },
+    {
+      "site": "Nimrod01",
+      "warehouse_number": 12,
+      "container_code": "US-NIMROD-01-C12",
+      "project_code": "US-NIMROD-01",
+      "running_power_kw": 64.887,
+      "running_machine_count": 22,
+      "total_slots": 189
+    },
+    {
+      "site": "Nimrod01",
+      "warehouse_number": 13,
+      "container_code": "US-NIMROD-01-C13",
+      "project_code": "US-NIMROD-01",
+      "running_power_kw": 419.395199999999,
+      "running_machine_count": 113,
+      "total_slots": 189
+    },
+    {
+      "site": "Nimrod01",
+      "warehouse_number": 14,
+      "container_code": "US-NIMROD-01-C14",
+      "project_code": "US-NIMROD-01",
+      "running_power_kw": 121.905,
+      "running_machine_count": 42,
+      "total_slots": 189
+    },
+    {
+      "site": "Nimrod01",
+      "warehouse_number": 15,
+      "container_code": "US-NIMROD-01-C15",
+      "project_code": "US-NIMROD-01",
+      "running_power_kw": 0.0,
+      "running_machine_count": 0,
+      "total_slots": 189
+    },
+    {
+      "site": "Nimrod01",
+      "warehouse_number": 16,
+      "container_code": "US-NIMROD-01-C16",
+      "project_code": "US-NIMROD-01",
+      "running_power_kw": 106.1025,
+      "running_machine_count": 35,
+      "total_slots": 189
+    },
+    {
+      "site": "Nimrod01",
+      "warehouse_number": 17,
+      "container_code": "US-NIMROD-01-C17",
+      "project_code": "US-NIMROD-01",
+      "running_power_kw": 871.550399999999,
+      "running_machine_count": 235,
+      "total_slots": 270
+    },
+    {
+      "site": "Nimrod01",
+      "warehouse_number": 18,
+      "container_code": "US-NIMROD-01-C18",
+      "project_code": "US-NIMROD-01",
+      "running_power_kw": 874.456800000001,
+      "running_machine_count": 236,
+      "total_slots": 270
+    },
+    {
+      "site": "Nimrod02",
+      "warehouse_number": 1,
+      "container_code": "US-NIMROD-02-C1",
+      "project_code": "US-NIMROD-02",
+      "running_power_kw": 904.785,
+      "running_machine_count": 248,
+      "total_slots": 276
+    },
+    {
+      "site": "Nimrod02",
+      "warehouse_number": 2,
+      "container_code": "US-NIMROD-02-C2",
+      "project_code": "US-NIMROD-02",
+      "running_power_kw": 850.935,
+      "running_machine_count": 240,
+      "total_slots": 276
+    },
+    {
+      "site": "Nimrod02",
+      "warehouse_number": 3,
+      "container_code": "US-NIMROD-02-C3",
+      "project_code": "US-NIMROD-02",
+      "running_power_kw": 892.5,
+      "running_machine_count": 248,
+      "total_slots": 276
+    },
+    {
+      "site": "Nimrod02",
+      "warehouse_number": 4,
+      "container_code": "US-NIMROD-02-C4",
+      "project_code": "US-NIMROD-02",
+      "running_power_kw": 876.135,
+      "running_machine_count": 249,
+      "total_slots": 276
+    },
+    {
+      "site": "Nimrod02",
+      "warehouse_number": 5,
+      "container_code": "US-NIMROD-02-C5",
+      "project_code": "US-NIMROD-02",
+      "running_power_kw": 917.76,
+      "running_machine_count": 251,
+      "total_slots": 276
+    },
+    {
+      "site": "Nimrod02",
+      "warehouse_number": 6,
+      "container_code": "US-NIMROD-02-C6",
+      "project_code": "US-NIMROD-02",
+      "running_power_kw": 893.76,
+      "running_machine_count": 245,
+      "total_slots": 276
+    },
+    {
+      "site": "Nimrod02",
+      "warehouse_number": 7,
+      "container_code": "US-NIMROD-02-C7",
+      "project_code": "US-NIMROD-02",
+      "running_power_kw": 906.938399999999,
+      "running_machine_count": 246,
+      "total_slots": 270
+    },
+    {
+      "site": "Nimrod02",
+      "warehouse_number": 8,
+      "container_code": "US-NIMROD-02-C8",
+      "project_code": "US-NIMROD-02",
+      "running_power_kw": 904.629600000001,
+      "running_machine_count": 243,
+      "total_slots": 270
+    },
+    {
+      "site": "Nimrod02",
+      "warehouse_number": 9,
+      "container_code": "US-NIMROD-02-C9",
+      "project_code": "US-NIMROD-02",
+      "running_power_kw": 893.272800000002,
+      "running_machine_count": 241,
+      "total_slots": 270
+    },
+    {
+      "site": "Nimrod02",
+      "warehouse_number": 10,
+      "container_code": "US-NIMROD-02-C10",
+      "project_code": "US-NIMROD-02",
+      "running_power_kw": 886.9896,
+      "running_machine_count": 240,
+      "total_slots": 270
+    },
+    {
+      "site": "Nimrod02",
+      "warehouse_number": 11,
+      "container_code": "US-NIMROD-02-C11",
+      "project_code": "US-NIMROD-02",
+      "running_power_kw": 876.220800000003,
+      "running_machine_count": 236,
+      "total_slots": 270
+    },
+    {
+      "site": "Nimrod02",
+      "warehouse_number": 12,
+      "container_code": "US-NIMROD-02-C12",
+      "project_code": "US-NIMROD-02",
+      "running_power_kw": 879.933600000003,
+      "running_machine_count": 237,
+      "total_slots": 270
+    },
+    {
+      "site": "Nimrod02",
+      "warehouse_number": 13,
+      "container_code": "US-NIMROD-02-C13",
+      "project_code": "US-NIMROD-02",
+      "running_power_kw": 948.915,
+      "running_machine_count": 249,
+      "total_slots": 270
+    },
+    {
+      "site": "Nimrod02",
+      "warehouse_number": 14,
+      "container_code": "US-NIMROD-02-C14",
+      "project_code": "US-NIMROD-02",
+      "running_power_kw": 940.8495,
+      "running_machine_count": 248,
+      "total_slots": 270
+    },
+    {
+      "site": "Nimrod02",
+      "warehouse_number": 15,
+      "container_code": "US-NIMROD-02-C15",
+      "project_code": "US-NIMROD-02",
+      "running_power_kw": 966.5205,
+      "running_machine_count": 254,
+      "total_slots": 270
+    },
+    {
+      "site": "Nimrod02",
+      "warehouse_number": 16,
+      "container_code": "US-NIMROD-02-C16",
+      "project_code": "US-NIMROD-02",
+      "running_power_kw": 966.3555,
+      "running_machine_count": 254,
+      "total_slots": 270
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 1,
+      "container_code": "US-WHITEOAK-01-C1",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 926.0955,
+      "running_machine_count": 253,
+      "total_slots": 276
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 2,
+      "container_code": "US-WHITEOAK-01-C2",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 964.05,
+      "running_machine_count": 268,
+      "total_slots": 276
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 3,
+      "container_code": "US-WHITEOAK-01-C3",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 971.01,
+      "running_machine_count": 270,
+      "total_slots": 276
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 4,
+      "container_code": "US-WHITEOAK-01-C4",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 926.415,
+      "running_machine_count": 265,
+      "total_slots": 276
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 5,
+      "container_code": "US-WHITEOAK-01-C5",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 931.689,
+      "running_machine_count": 245,
+      "total_slots": 252
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 6,
+      "container_code": "US-WHITEOAK-01-C6",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 909.6615,
+      "running_machine_count": 242,
+      "total_slots": 252
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 7,
+      "container_code": "US-WHITEOAK-01-C7",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 926.343,
+      "running_machine_count": 244,
+      "total_slots": 252
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 8,
+      "container_code": "US-WHITEOAK-01-C8",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 906.2955,
+      "running_machine_count": 245,
+      "total_slots": 249
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 9,
+      "container_code": "US-WHITEOAK-01-C9",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 910.5195,
+      "running_machine_count": 237,
+      "total_slots": 249
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 10,
+      "container_code": "US-WHITEOAK-01-C10",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 936.474,
+      "running_machine_count": 243,
+      "total_slots": 248
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 11,
+      "container_code": "US-WHITEOAK-01-C11",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 972.18,
+      "running_machine_count": 262,
+      "total_slots": 276
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 12,
+      "container_code": "US-WHITEOAK-01-C12",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 0.0,
+      "running_machine_count": 0,
+      "total_slots": 232
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 13,
+      "container_code": "US-WHITEOAK-01-C13",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 892.35,
+      "running_machine_count": 255,
+      "total_slots": 270
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 14,
+      "container_code": "US-WHITEOAK-01-C14",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 928.095,
+      "running_machine_count": 273,
+      "total_slots": 276
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 15,
+      "container_code": "US-WHITEOAK-01-C15",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 949.05,
+      "running_machine_count": 274,
+      "total_slots": 276
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 16,
+      "container_code": "US-WHITEOAK-01-C16",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 945.195,
+      "running_machine_count": 274,
+      "total_slots": 276
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 17,
+      "container_code": "US-WHITEOAK-01-C17",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 950.15,
+      "running_machine_count": 263,
+      "total_slots": 276
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 18,
+      "container_code": "US-WHITEOAK-01-C18",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 1024.64,
+      "running_machine_count": 288,
+      "total_slots": 300
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 19,
+      "container_code": "US-WHITEOAK-01-C19",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 1022.208,
+      "running_machine_count": 288,
+      "total_slots": 300
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 20,
+      "container_code": "US-WHITEOAK-01-C20",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 906.708,
+      "running_machine_count": 239,
+      "total_slots": 300
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 21,
+      "container_code": "US-WHITEOAK-01-C21",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 905.4,
+      "running_machine_count": 269,
+      "total_slots": 276
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 22,
+      "container_code": "US-WHITEOAK-01-C22",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 915.39,
+      "running_machine_count": 275,
+      "total_slots": 276
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 23,
+      "container_code": "US-WHITEOAK-01-C23",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 926.565,
+      "running_machine_count": 270,
+      "total_slots": 276
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 24,
+      "container_code": "US-WHITEOAK-01-C24",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 968.685,
+      "running_machine_count": 275,
+      "total_slots": 276
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 25,
+      "container_code": "US-WHITEOAK-01-C25",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 923.3325,
+      "running_machine_count": 253,
+      "total_slots": 276
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 26,
+      "container_code": "US-WHITEOAK-01-C26",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 966.12,
+      "running_machine_count": 271,
+      "total_slots": 276
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 27,
+      "container_code": "US-WHITEOAK-01-C27",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 911.25,
+      "running_machine_count": 262,
+      "total_slots": 276
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 28,
+      "container_code": "US-WHITEOAK-01-C28",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 918.81,
+      "running_machine_count": 270,
+      "total_slots": 276
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 29,
+      "container_code": "US-WHITEOAK-01-C29",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 982.540599999998,
+      "running_machine_count": 288,
+      "total_slots": 288
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 30,
+      "container_code": "US-WHITEOAK-01-C30",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 961.376,
+      "running_machine_count": 288,
+      "total_slots": 288
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 31,
+      "container_code": "US-WHITEOAK-01-C31",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 956.002199999999,
+      "running_machine_count": 288,
+      "total_slots": 288
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 32,
+      "container_code": "US-WHITEOAK-01-C32",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 965.405999999999,
+      "running_machine_count": 287,
+      "total_slots": 288
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 33,
+      "container_code": "US-WHITEOAK-01-C33",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 974.88,
+      "running_machine_count": 285,
+      "total_slots": 288
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 34,
+      "container_code": "US-WHITEOAK-01-C34",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 559.8636,
+      "running_machine_count": 160,
+      "total_slots": 288
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 35,
+      "container_code": "US-WHITEOAK-01-C35",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 1020.48,
+      "running_machine_count": 287,
+      "total_slots": 288
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 36,
+      "container_code": "US-WHITEOAK-01-C36",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 878.9985,
+      "running_machine_count": 243,
+      "total_slots": 268
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 37,
+      "container_code": "US-WHITEOAK-01-C37",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 980.505,
+      "running_machine_count": 269,
+      "total_slots": 270
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 38,
+      "container_code": "US-WHITEOAK-01-C38",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 980.505,
+      "running_machine_count": 269,
+      "total_slots": 270
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 39,
+      "container_code": "US-WHITEOAK-01-C39",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 962.28,
+      "running_machine_count": 264,
+      "total_slots": 270
+    },
+    {
+      "site": "WhiteOak01",
+      "warehouse_number": 40,
+      "container_code": "US-WHITEOAK-01-C40",
+      "project_code": "US-WHITEOAK-01",
+      "running_power_kw": 980.505,
+      "running_machine_count": 269,
+      "total_slots": 270
+    }
+  ]
+}

@@ -51,6 +51,14 @@ def numeric_sum(rows, key):
     return sum(row.get(key) or 0 for row in rows)
 
 
+def numeric_count(rows, key):
+    return sum(
+        isinstance(row.get(key), (int, float))
+        and math.isfinite(float(row[key]))
+        for row in rows
+    )
+
+
 def discover_summary_sources(root, days=None, end_date=None):
     root = Path(root)
     candidates = list(root.rglob("*_warehouse_dashboard.json")) if root.exists() else []
@@ -142,6 +150,12 @@ def load_lark_power(path, expected_date=None):
     snapshot = load_json(path)
     if snapshot.get("schema_version") != "1.0":
         raise ValueError(f"Unsupported Lark-OM表 power schema in {path}")
+    record_schema = str(snapshot.get("record_schema") or "").strip()
+    if record_schema not in ("", "legacy_capacity_v1", "running_power_v2"):
+        raise ValueError(
+            f"Unsupported Lark-OM表 record_schema in {path}: "
+            f"{record_schema!r}"
+        )
     snapshot_date = str(
         snapshot.get("snapshot_date")
         or (iso_date(expected_date) if expected_date else "")
@@ -319,6 +333,17 @@ def attach_lark_power(warehouses, snapshots):
         matched_by_date[date] = {
             "snapshot_date": date,
             "schema_version": snapshot["schema_version"],
+            "record_schema": (
+                snapshot.get("record_schema")
+                or (
+                    "legacy_capacity_v1"
+                    if any(
+                        "mounted_power_kw" in record
+                        for record in snapshot.get("records") or []
+                    )
+                    else "running_power_v2"
+                )
+            ),
             "source": snapshot.get("source"),
             "synced_at": snapshot.get("synced_at"),
             "record_count": len(by_key),
@@ -348,23 +373,46 @@ def site_lark_power(warehouses, snapshots, date):
         record = by_key.get(key)
         if record:
             matched.append(record)
+    record_schema = snapshot.get("record_schema") or (
+        "legacy_capacity_v1"
+        if any("mounted_power_kw" in record for record in matched)
+        else "running_power_v2"
+    )
+    running_power_key = (
+        "running_power_kw"
+        if record_schema == "running_power_v2"
+        else "mounted_power_kw"
+    )
+    running_machine_key = (
+        "running_machine_count"
+        if record_schema == "running_power_v2"
+        else "mounted_machine_count"
+    )
+    reserved_values = [
+        record.get("reserved_power_kw")
+        for record in matched
+        if isinstance(record.get("reserved_power_kw"), (int, float))
+        and math.isfinite(float(record["reserved_power_kw"]))
+    ]
     return {
         "available": True,
         "snapshot_date": date,
+        "record_schema": record_schema,
         "synced_at": snapshot.get("synced_at"),
         "matched_warehouses": len(matched),
         "total_warehouses": len(warehouses),
         "missing_capacity_warehouses": sum(
-            not isinstance(record.get("mounted_power_kw"), (int, float))
+            not isinstance(record.get(running_power_key), (int, float))
             for record in matched
         ),
-        "mounted_power_kw": numeric_sum(matched, "mounted_power_kw"),
-        "reserved_power_kw": numeric_sum(matched, "reserved_power_kw"),
-        "power_limit_kw": numeric_sum(matched, "power_limit_kw"),
-        "mounted_machine_count": int(
-            numeric_sum(matched, "mounted_machine_count")
+        "running_power_kw": numeric_sum(matched, running_power_key),
+        "running_power_count": numeric_count(matched, running_power_key),
+        "running_machine_count": int(
+            numeric_sum(matched, running_machine_key)
         ),
-        "occupied_slots": int(numeric_sum(matched, "occupied_slots")),
+        "reserved_power_kw": sum(reserved_values) if reserved_values else None,
+        "reserved_power_count": len(reserved_values),
+        "power_limit_kw": numeric_sum(matched, "power_limit_kw"),
         "total_slots": int(numeric_sum(matched, "total_slots")),
     }
 
@@ -515,6 +563,18 @@ def daily_totals(
     meter_hours = {int(row["hour"]) for row in meter_rows}
     meter_warehouses = {row["warehouse_id"] for row in meter_rows}
     meter_power = numeric_sum(meter_rows, "meter_power_kw")
+    meter_power_by_hour = defaultdict(float)
+    for row in meter_rows:
+        meter_power_by_hour[int(row["hour"])] += float(
+            row.get("meter_power_kw") or 0
+        )
+    meter_peak_hour = None
+    meter_peak_power = None
+    if meter_power_by_hour:
+        meter_peak_hour, meter_peak_power = max(
+            meter_power_by_hour.items(),
+            key=lambda item: (item[1], -item[0]),
+        )
     actual_power = (
         numeric_sum(machine_rows, "actual_power_kw")
         if machine_rows else None
@@ -563,6 +623,8 @@ def daily_totals(
         "meter_hour_sum_kw": meter_power if meter_rows else None,
         "meter_hour_count": len(meter_hours),
         "meter_hours_with_data": len(meter_hours),
+        "meter_hour_peak_kw": meter_peak_power,
+        "meter_hour_peak_hour": meter_peak_hour,
         "meter_covered_warehouses": len(meter_warehouses),
         "meter_total_warehouses": warehouse_count,
         "theoretical_power_kw": configured_theoretical_power,
@@ -1194,7 +1256,7 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
         })
 
     catalog = {
-        "schema_version": "3.5",
+        "schema_version": "3.6",
         "purpose": "rolling_public_multisite_warehouse_hourly_dashboard",
         "timezone": DATA_TIMEZONE,
         "data_version": dt.datetime.now(dt.timezone.utc).isoformat(),

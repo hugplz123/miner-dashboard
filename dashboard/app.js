@@ -345,6 +345,27 @@ function larkRecordFor(warehouse, date = selectedDate) {
   return warehouse?.lark_power_by_date?.[date] || null;
 }
 
+function larkRecordUsesRunningPower(record) {
+  return Boolean(record && (
+    Object.hasOwn(record, "running_power_kw")
+    || Object.hasOwn(record, "running_machine_count")
+  ));
+}
+
+function larkRunningPower(record) {
+  if (!record) return null;
+  return larkRecordUsesRunningPower(record)
+    ? record.running_power_kw
+    : record.mounted_power_kw;
+}
+
+function larkRunningMachines(record) {
+  if (!record) return null;
+  return larkRecordUsesRunningPower(record)
+    ? record.running_machine_count
+    : record.mounted_machine_count;
+}
+
 function warehouseTheoreticalPower(row) {
   for (const value of [
     row?.theoretical_power_kw,
@@ -426,18 +447,31 @@ function larkPowerSnapshot(site = currentSite(), date = selectedDate) {
     .filter(Boolean);
   const siteSnapshot = site?.lark_power_by_date?.[date];
   const available = Boolean(siteSnapshot?.available && rows.length);
+  const recordSchema = siteSnapshot?.record_schema
+    || (rows.some(larkRecordUsesRunningPower)
+      ? "running_power_v2"
+      : "legacy_capacity_v1");
+  const runningPowerKey = recordSchema === "running_power_v2"
+    ? "running_power_kw" : "mounted_power_kw";
+  const runningMachineKey = recordSchema === "running_power_v2"
+    ? "running_machine_count" : "mounted_machine_count";
+  const runningMachines = available
+    ? finiteSum(rows, runningMachineKey) : null;
+  const totalSlots = available ? finiteSum(rows, "total_slots") : null;
   return {
     available,
+    recordSchema,
     snapshotDate: available ? date : null,
     syncedAt: available ? siteSnapshot?.synced_at : null,
     matched: rows.length,
-    mountedPower: available ? finiteSum(rows, "mounted_power_kw") : null,
-    mountedPowerCount: available ? finiteCount(rows, "mounted_power_kw") : 0,
+    runningPower: available ? finiteSum(rows, runningPowerKey) : null,
+    runningPowerCount: available ? finiteCount(rows, runningPowerKey) : 0,
+    runningMachines,
+    runningMachineCount: available
+      ? finiteCount(rows, runningMachineKey) : 0,
+    totalSlots,
     reservedPower: available ? finiteSum(rows, "reserved_power_kw") : null,
     reservedPowerCount: available ? finiteCount(rows, "reserved_power_kw") : 0,
-    mountedMachines: available ? finiteSum(rows, "mounted_machine_count") : null,
-    mountedMachineCount: available
-      ? finiteCount(rows, "mounted_machine_count") : 0,
     occupiedSlots: available ? sum(rows, "occupied_slots") : null,
   };
 }
@@ -866,23 +900,23 @@ function larkPanelHTML(row) {
       <div class="lark-unmatched">${esc(selectedDate)} 没有 Lark-OM表容量记录，未使用其他日期替代。</div>
     </div>`;
   }
-  const capacityFields = [
-    lark.mounted_power_kw,
-    lark.reserved_power_kw,
-    lark.unit_theoretical_power_kw,
-  ];
+  const usesRunningPower = larkRecordUsesRunningPower(lark);
+  const capacityFields = usesRunningPower
+    ? [
+        larkRunningPower(lark),
+        lark.running_machine_count,
+        lark.total_slots,
+      ]
+    : [
+        lark.mounted_power_kw,
+        lark.reserved_power_kw,
+        lark.mounted_machine_count,
+        lark.occupied_slots,
+      ];
   const presentFields = capacityFields.filter(finite).length;
   const status = presentFields === capacityFields.length
     ? "已匹配" : presentFields ? "部分缺失" : "字段缺失";
   const theory = row.theoretical_power_kw;
-  const usageLabel = capacity => {
-    const actual = Number(row.actual_power_kw);
-    const denominator = Number(capacity);
-    return Number.isFinite(actual) && Number.isFinite(denominator)
-      && denominator > 0
-      ? `${fmt(actual / denominator * 100)}%`
-      : "不可计算";
-  };
   const capacityRow = (label, value, note) => {
     const noteHTML = note
       ? `<div class="capacity-note">${esc(note)}</div>`
@@ -917,22 +951,28 @@ function larkPanelHTML(row) {
       ${noteHTML}
     </div>`;
   };
+  const capacityRows = usesRunningPower
+    ? capacityRow(
+        "Lark-OM表运行功率",
+        lark.running_power_kw,
+        `运行 ${lark.running_machine_count ?? "—"} / 机位总数 ${lark.total_slots ?? "—"} 台`,
+      )
+    : capacityRow(
+        "Lark-OM表在架功率",
+        lark.mounted_power_kw,
+        `在架 ${lark.mounted_machine_count ?? "—"} 台`,
+      ) + capacityRow(
+        "Lark-OM表占位功率",
+        lark.reserved_power_kw,
+        `占位 ${lark.occupied_slots ?? "—"}/${lark.total_slots ?? "—"} 个槽位`,
+      );
   return `<div class="lark-power-panel">
     <div class="lark-panel-head">
       <span>矿箱容量刻度 · 矿箱理论功率 ${finite(theory) ? `${fmt(theory)} kW` : "未配置"}</span>
       <b>${status}</b>
     </div>
-    <div class="capacity-grid">
-      ${capacityRow(
-        `Lark-OM表在架功率（${usageLabel(lark.mounted_power_kw)}）`,
-        lark.mounted_power_kw,
-        `在架 ${lark.mounted_machine_count ?? "—"} 台`,
-      )}
-      ${capacityRow(
-        `Lark-OM表占位功率（${usageLabel(lark.reserved_power_kw)}）`,
-        lark.reserved_power_kw,
-        `占位 ${lark.occupied_slots ?? "—"}/${lark.total_slots ?? "—"} 个槽位`,
-      )}
+    <div class="capacity-grid${usesRunningPower ? " single" : ""}">
+      ${capacityRows}
     </div>
   </div>`;
 }
@@ -1090,11 +1130,11 @@ function cardHTML(row) {
   const powerMissing = machineDataAvailable && !actualPowerAvailable;
   const loadPercent = hasTheory
     ? Math.max(0, Math.min(100, Number(row.load_ratio) * 100)) : null;
-  const installedMachines = row.lark_power?.mounted_machine_count;
+  const installedMachines = larkRunningMachines(row.lark_power);
   const reportingMismatch = finite(installedMachines)
     && Number(installedMachines) !== Number(row.machine_count);
   const reportingBadge = finite(installedMachines)
-    ? `<span class="reporting ${reportingMismatch ? "warn" : "ok"}">上报 ${row.machine_count}/${installedMachines} 台</span>`
+    ? `<span class="reporting ${reportingMismatch ? "warn" : "ok"}">上报 ${row.machine_count} / 运行 ${installedMachines} 台</span>`
     : "";
   const statusText = meterOnly
     ? "矿机小时数据缺失"
@@ -1206,8 +1246,9 @@ function render() {
     meterRows.map(row => row.warehouse_id),
   ).size;
   const larkMatched = lark.matched;
-  const larkMounted = lark.mountedPower;
+  const larkRunning = lark.runningPower;
   const larkReserved = lark.reservedPower;
+  const runningSchema = lark.recordSchema === "running_power_v2";
   const daily = dailyFor(selectedDate, site);
   const observedHours = daily?.hours_with_data ?? daily?.hours?.length ?? hours.length;
   const expectedHours = daily?.expected_hours ?? expectedHoursPerDay;
@@ -1226,14 +1267,14 @@ function render() {
   $("notice").textContent = lark.available
     ? `矿箱小时实际功率由矿机小时平均功耗汇总；矿箱电表小时实测功率取该 UTC 小时最接近整点的一条电表读数，单独展示且不覆盖矿机汇总。Lark-OM表使用 ${selectedDate} 当日快照，同步于 ${syncTimeLabel(lark.syncedAt)}。`
     : `矿箱小时实际功率由矿机小时平均功耗汇总；矿箱电表小时实测功率取该 UTC 小时最接近整点的一条电表读数，单独展示且不覆盖矿机汇总。${selectedDate} 没有 Lark-OM表容量快照，因此不沿用其他日期容量。`;
-  $("metrics").innerHTML = `<div class="overview-power-grid">
+  $("metrics").innerHTML = `<div class="overview-power-grid${runningSchema ? " running-schema" : ""}">
       ${overviewMetric(
         "矿箱小时实际功率", fmt(actualPower), "kW",
         powerMarginHTML(actualPower, theoryPower),
         {
           key: "actual",
           scope: currentHourLabel,
-          meta: `矿机数据覆盖 <b>${machineReportedBoxes}/${activeWarehouseCount}</b> 箱 · 上报矿机 <b>${fmt(machineCount, 0)}${lark.available && finite(lark.mountedMachines) ? `/${fmt(lark.mountedMachines, 0)}` : ""}</b> 台`,
+          meta: `矿机数据覆盖 <b>${machineReportedBoxes}/${activeWarehouseCount}</b> 箱 · 上报矿机 <b>${fmt(machineCount, 0)}${lark.available && finite(lark.runningMachines) ? `/运行 ${fmt(lark.runningMachines, 0)}` : ""}</b> 台`,
         },
       )}
       ${overviewMetric(
@@ -1246,17 +1287,18 @@ function render() {
         },
       )}
       ${overviewMetric(
-        "Lark-OM表在架功率", fmt(larkMounted), "kW",
-        powerMarginHTML(larkMounted, theoryPower),
+        runningSchema ? "Lark-OM表运行功率" : "Lark-OM表在架功率",
+        fmt(larkRunning), "kW",
+        powerMarginHTML(larkRunning, theoryPower),
         {
-          key: "mounted",
+          key: runningSchema ? "running" : "mounted",
           scope: lark.available ? "当日快照" : "无快照",
           meta: lark.available
-            ? `快照覆盖 ${lark.mountedPowerCount}/${larkMatched} 箱`
+            ? `快照覆盖 ${lark.runningPowerCount}/${larkMatched} 箱${runningSchema && finite(lark.runningMachines) && finite(lark.totalSlots) ? ` · 运行 <b>${fmt(lark.runningMachines, 0)}</b> / 机位总数 <b>${fmt(lark.totalSlots, 0)}</b> 台` : ""}`
             : "Lark-OM表快照缺失",
         },
       )}
-      ${overviewMetric(
+      ${runningSchema ? "" : overviewMetric(
         "Lark-OM表占位功率", fmt(larkReserved), "kW",
         powerMarginHTML(larkReserved, theoryPower),
         {
@@ -1382,7 +1424,7 @@ function dailySeries() {
       meterPeakHour: finite(item.meter_hour_peak_hour)
         ? Number(item.meter_hour_peak_hour) : null,
       theoreticalPower: siteTheoreticalPower(item),
-      mountedPower: larkPowerSnapshot(site, item.date).mountedPower,
+      runningPower: larkPowerSnapshot(site, item.date).runningPower,
       detail: item,
       complete,
       missing: false,
@@ -1417,7 +1459,7 @@ function hourlySeries() {
       meterPeakPower,
       meterPeakHour,
       theoreticalPower: theoryPower,
-      mountedPower: lark.available ? lark.mountedPower : null,
+      runningPower: lark.available ? lark.runningPower : null,
       detail: {
         machine_count: summary?.machine_count ?? null,
         power_ratio_sample_count: summary?.power_ratio_sample_count ?? null,
@@ -2282,8 +2324,9 @@ function detailMetricGroup(key, title, note, metrics) {
 
 function renderDetailSummary(row) {
   $("detail-title").textContent = `${row.warehouse_name} · 矿箱详情`;
-  const reporting = finite(row.lark_power?.mounted_machine_count)
-    ? ` · 上报 ${row.machine_count}/${fmt(row.lark_power.mounted_machine_count, 0)} 台`
+  const runningMachines = larkRunningMachines(row.lark_power);
+  const reporting = finite(runningMachines)
+    ? ` · 上报 ${row.machine_count}/运行 ${fmt(runningMachines, 0)} 台`
     : "";
   $("detail-meta").textContent = `${row.data_center_name} · 采样时间 ${machineSampleLabel(row)} · 本箱覆盖 ${coverageLabel(warehouseHours(row.warehouse_id))}${reporting}`;
   const gap = powerGap(row);
@@ -2381,7 +2424,11 @@ function renderDetailSummary(row) {
         label: "单机理论平均功率",
         value: fmt(row.lark_power?.unit_theoretical_power_kw, 2),
         unit: "kW",
-        note: "Lark-OM表配置",
+        note: finite(row.lark_power?.unit_theoretical_power_kw)
+          ? "Lark-OM表配置"
+          : larkRecordUsesRunningPower(row.lark_power)
+            ? "当前 Lark-OM表未提供"
+            : "Lark-OM表未配置",
       },
       {
         label: "单机小时平均功耗比",
