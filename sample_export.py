@@ -3,6 +3,7 @@ import csv
 import datetime as dt
 import json
 import sys
+import time
 import zipfile
 from collections import defaultdict
 from decimal import Decimal
@@ -31,11 +32,13 @@ SITES = {
     "May01": "abca092860704393bcf1070462510797",
     "Blossom01": "c0449798c6494a49bac60a6d924c9115",
 }
-SOURCE_TEMPERATURE_UNIT = "fahrenheit"
+SOURCE_TEMPERATURE_UNIT = "celsius"
 DATA_TIMEZONE = "UTC+0"
-TEMPERATURE_VALID_MAX = Decimal(250)  # 250 F = 121 C
+TEMPERATURE_VALID_MIN = Decimal(-30)
+TEMPERATURE_VALID_MAX = Decimal(125)
 HASHRATE_PER_TH = Decimal(10**12)
-QUERY_CHUNK_HOURS = 6
+QUERY_CHUNK_HOURS = 3
+QUERY_RETRY_ATTEMPTS = 4
 DEFAULT_THEORETICAL_POWER_PATH = Path("inputs") / "矿箱理论功率.xlsx"
 SUMMARY_API_FIELDS = {
     "data_center_id": "场地ID", "data_center_name": "场地名称",
@@ -131,6 +134,25 @@ def iter_hour_chunks(start_hour, end_hour, chunk_hours):
         current = chunk_end
 
 
+def datetime_to_utc_iso(value):
+    if value in (None, ""):
+        return None
+    if isinstance(value, dt.datetime):
+        parsed = value
+    else:
+        try:
+            parsed = dt.datetime.fromisoformat(
+                str(value).strip().replace("Z", "+00:00")
+            )
+        except (TypeError, ValueError):
+            return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=dt.timezone.utc)
+    else:
+        parsed = parsed.astimezone(dt.timezone.utc)
+    return parsed.isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
 def read_theoretical_power(path):
     """Read the first three columns of the supplied xlsx without extra dependencies."""
     path = Path(path)
@@ -203,13 +225,27 @@ def connect(conf):
     )
 
 
+def with_database_retry(operation, label):
+    for attempt in range(1, QUERY_RETRY_ATTEMPTS + 1):
+        try:
+            return operation()
+        except (pymysql.err.InterfaceError, pymysql.err.OperationalError) as exc:
+            if attempt == QUERY_RETRY_ATTEMPTS:
+                raise
+            delay = 2 ** attempt
+            print(
+                f"{label} failed ({exc}); retrying in {delay}s "
+                f"({attempt}/{QUERY_RETRY_ATTEMPTS})",
+                flush=True,
+            )
+            time.sleep(delay)
+
+
 def temperature_to_celsius(value):
     if value is None:
         return None
     value = Decimal(value)
-    # Some sites never populate temperature: every row is 0. Treat non-positive
-    # readings as missing instead of turning 0 F into a misleading -17.8 C.
-    if value <= 0 or value > TEMPERATURE_VALID_MAX:
+    if value < TEMPERATURE_VALID_MIN or value > TEMPERATURE_VALID_MAX:
         return None
     if SOURCE_TEMPERATURE_UNIT == "fahrenheit":
         return (value - Decimal(32)) * Decimal(5) / Decimal(9)
@@ -315,7 +351,7 @@ def warehouse_summary_query(source_table, center_id, start_hour, end_hour,
             SELECT
                 id, client_miner_template_id, model, ip, hour, avg_hashrate,
                 rejected_rate, avg_power, temperature, work_mode,
-                worker_location,
+                worker_location, gmt_create,
                 ROW_NUMBER() OVER (
                     PARTITION BY hour, ip
                     ORDER BY gmt_modified DESC, gmt_create DESC, id DESC
@@ -414,17 +450,18 @@ def warehouse_summary_query(source_table, center_id, start_hour, end_hour,
                     WHEN avg_hashrate > 0 AND avg_power > 0
                     THEN avg_power / (avg_hashrate / 1000000000000)
                 END) AS ratio_sum,
-                MAX(CASE WHEN temperature > 0 AND temperature <= 250
-                    THEN (temperature - 32) * 5 / 9 END) AS temperature_max_c,
-                MIN(CASE WHEN temperature > 0 AND temperature <= 250
-                    THEN (temperature - 32) * 5 / 9 END) AS temperature_min_c,
-                AVG(CASE WHEN temperature > 0 AND temperature <= 250
-                    THEN (temperature - 32) * 5 / 9 END) AS temperature_avg_c,
-                SUM(CASE WHEN temperature > 0 AND temperature <= 250
-                    THEN (temperature - 32) * 5 / 9 ELSE 0 END)
+                MAX(CASE WHEN temperature >= -30 AND temperature <= 125
+                    THEN temperature END) AS temperature_max_c,
+                MIN(CASE WHEN temperature >= -30 AND temperature <= 125
+                    THEN temperature END) AS temperature_min_c,
+                AVG(CASE WHEN temperature >= -30 AND temperature <= 125
+                    THEN temperature END) AS temperature_avg_c,
+                SUM(CASE WHEN temperature >= -30 AND temperature <= 125
+                    THEN temperature ELSE 0 END)
                     AS temperature_sum_c,
-                SUM(CASE WHEN temperature > 0 AND temperature <= 250
+                SUM(CASE WHEN temperature >= -30 AND temperature <= 125
                     THEN 1 ELSE 0 END) AS temperature_count,
+                MAX(gmt_create) AS machine_recorded_at,
                 SUM(avg_power) / 1000 AS actual_power_kw
             FROM machines
             GROUP BY warehouse_id, hour
@@ -467,7 +504,7 @@ def warehouse_machine_rows_query(source_table, start_hour, end_hour,
             SELECT
                 client_miner_template_id, model, ip, hour, avg_hashrate,
                 rejected_rate, avg_power, temperature, work_mode,
-                worker_location,
+                worker_location, gmt_create,
                 ROW_NUMBER() OVER (
                     PARTITION BY hour, ip
                     ORDER BY gmt_modified DESC, gmt_create DESC, id DESC
@@ -492,7 +529,8 @@ def warehouse_machine_rows_query(source_table, start_hour, end_hour,
         )
         SELECT
             warehouse_id, hour, ip, client_miner_template_id, model,
-            avg_hashrate, rejected_rate, avg_power, temperature, work_mode
+            avg_hashrate, rejected_rate, avg_power, temperature, work_mode,
+            gmt_create
         FROM located
         WHERE warehouse_id IN ({placeholders})
     """
@@ -585,6 +623,11 @@ def build_summary_payloads(aggregates, center_id, site, warehouses,
         dashboard = {
             field: summary[label] for field, label in SUMMARY_API_FIELDS.items()
         }
+        machine_recorded_at = datetime_to_utc_iso(
+            aggregate.get("machine_recorded_at")
+        )
+        summary["矿机采样时间(UTC)"] = machine_recorded_at
+        dashboard["machine_recorded_at"] = machine_recorded_at
         dashboard["models"] = [
             {"model": model or None, "machine_count": int(count)}
             for model, count in sorted(models.items())
@@ -640,7 +683,8 @@ def write_summary_only_outputs(output_dir, prefix, day, stat_date, site,
                                theoretical_power_path):
     write_csv(output_dir / f"{prefix}_warehouse_hourly.csv", summary_rows,
               fields=list(SUMMARY_API_FIELDS.values())[:7]
-              + ["各型号矿机数量", "算力组ID及名称", "各档位矿机数量"]
+              + ["各型号矿机数量", "算力组ID及名称", "各档位矿机数量",
+                 "矿机采样时间(UTC)"]
               + list(SUMMARY_API_FIELDS.values())[7:])
     (output_dir / f"{prefix}_warehouse_dashboard.json").write_text(json.dumps({
         "schema_version": "2.1",
@@ -735,53 +779,67 @@ def export(config_path, stat_date, output_dir, reuse=False, site="Nimrod01",
                 if row.get(field) is not None:
                     row[field] = Decimal(str(row[field]))
     else:
-        conn = connect(read_config(config_path)["main_db"])
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SET TRANSACTION READ ONLY")
-                cur.execute("START TRANSACTION WITH CONSISTENT SNAPSHOT")
-                cur.execute(
-                    """
-                    SELECT id, name, data_center_id, type, is_deleted
-                    FROM t_data_center_ware_house
-                    WHERE data_center_id = %s
-                    """,
-                    (center_id,),
-                )
-                warehouse_rows = cur.fetchall()
-                source_rows = []
-                for chunk_start, chunk_end in iter_hour_chunks(
-                    start_hour, end_hour, QUERY_CHUNK_HOURS
-                ):
-                    cur.execute(
-                        f"""
-                    SELECT /*+ MAX_EXECUTION_TIME(300000) */
-                           {query_columns}
-                    FROM `{source_table}`
-                    WHERE data_center_id = %s AND hour >= %s AND hour < %s
-                    """,
-                        (center_id, chunk_start, chunk_end),
-                    )
-                    hour_rows = cur.fetchall()
-                    source_rows.extend(hour_rows)
-                    print(
-                        f"{site} {chunk_start}-{chunk_end}: "
-                        f"{len(hour_rows)} rows", flush=True,
-                    )
-                template_ids = sorted({
-                    row["client_miner_template_id"]
-                    for row in source_rows if row["client_miner_template_id"]
-                })
-                templates = {}
-                if template_ids:
-                    placeholders = ",".join(["%s"] * len(template_ids))
-                    cur.execute(
-                        f"SELECT id, name FROM t_client_miner_template "
-                        f"WHERE id IN ({placeholders})", template_ids,
-                    )
-                    templates = {row["id"]: row["name"] for row in cur.fetchall()}
-        finally:
-            conn.close()
+        database_config = read_config(config_path)["main_db"]
+
+        def query_database(statement, parameters):
+            conn = connect(database_config)
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SET TRANSACTION READ ONLY")
+                    cur.execute("START TRANSACTION WITH CONSISTENT SNAPSHOT")
+                    cur.execute(statement, parameters)
+                    return cur.fetchall()
+            finally:
+                conn.close()
+
+        warehouse_rows = with_database_retry(
+            lambda: query_database(
+                """
+                SELECT id, name, data_center_id, type, is_deleted
+                FROM t_data_center_ware_house
+                WHERE data_center_id = %s
+                """,
+                (center_id,),
+            ),
+            f"{site} warehouse metadata",
+        )
+        source_rows = []
+        for chunk_start, chunk_end in iter_hour_chunks(
+            start_hour, end_hour, QUERY_CHUNK_HOURS
+        ):
+            hour_rows = with_database_retry(
+                lambda: query_database(
+                    f"""
+                SELECT /*+ MAX_EXECUTION_TIME(600000) */
+                       {query_columns}
+                FROM `{source_table}`
+                WHERE data_center_id = %s AND hour >= %s AND hour < %s
+                """,
+                    (center_id, chunk_start, chunk_end),
+                ),
+                f"{site} {chunk_start}-{chunk_end}",
+            )
+            source_rows.extend(hour_rows)
+            print(
+                f"{site} {chunk_start}-{chunk_end}: "
+                f"{len(hour_rows)} rows", flush=True,
+            )
+        template_ids = sorted({
+            row["client_miner_template_id"]
+            for row in source_rows if row["client_miner_template_id"]
+        })
+        templates = {}
+        if template_ids:
+            placeholders = ",".join(["%s"] * len(template_ids))
+            template_rows = with_database_retry(
+                lambda: query_database(
+                    f"SELECT id, name FROM t_client_miner_template "
+                    f"WHERE id IN ({placeholders})",
+                    template_ids,
+                ),
+                f"{site} mining templates",
+            )
+            templates = {row["id"]: row["name"] for row in template_rows}
         if not summary_only:
             cache_path.write_text(json.dumps({
                 "table": source_table, "day": stat_date, "rows": source_rows,
@@ -914,6 +972,7 @@ def export(config_path, stat_date, output_dir, reuse=False, site="Nimrod01",
             "单机功耗比(W/TH)": None,
             "拒绝率": row.get("rejected_rate"),
             "温度(°C)": temperature_to_celsius(row.get("temperature")),
+            "_gmt_create": row.get("gmt_create"),
         }
         hashrate = row.get("avg_hashrate")
         power = row.get("avg_power")
@@ -983,6 +1042,14 @@ def export(config_path, stat_date, output_dir, reuse=False, site="Nimrod01",
                 ].append(machine)
 
         metrics, samples, valid_power, valid_hashrate = aggregate_metrics(machines)
+        machine_create_values = [
+            machine["_gmt_create"]
+            for machine in machines
+            if machine.get("_gmt_create") not in (None, "")
+        ]
+        machine_recorded_at = datetime_to_utc_iso(
+            max(machine_create_values) if machine_create_values else None
+        )
         actual_power_w = sum(
             (machine["平均功耗(W)"] for machine in machines
              if machine["平均功耗(W)"] is not None),
@@ -1026,6 +1093,7 @@ def export(config_path, stat_date, output_dir, reuse=False, site="Nimrod01",
                 max(capacity_difference_kw, Decimal(0))
                 if capacity_difference_kw is not None else None
             ),
+            "矿机采样时间(UTC)": machine_recorded_at,
             **metrics,
         }
         summary_rows.append(summary)
@@ -1047,6 +1115,7 @@ def export(config_path, stat_date, output_dir, reuse=False, site="Nimrod01",
             for mode, count in sorted(work_mode_counts.items())
         ]
         dashboard["metric_samples"] = samples
+        dashboard["machine_recorded_at"] = machine_recorded_at
         dashboard["power_ratio_valid_power_sum_w"] = valid_power or None
         dashboard["power_ratio_valid_hashrate_sum_ths"] = valid_hashrate or None
         dashboard_rows.append(dashboard)
@@ -1072,7 +1141,8 @@ def export(config_path, stat_date, output_dir, reuse=False, site="Nimrod01",
     if not summary_only:
         write_csv(output_dir / f"{prefix}_warehouse_hourly.csv", summary_rows,
                   fields=list(SUMMARY_API_FIELDS.values())[:7]
-                  + ["各型号矿机数量", "算力组ID及名称", "各档位矿机数量"]
+                  + ["各型号矿机数量", "算力组ID及名称", "各档位矿机数量",
+                     "矿机采样时间(UTC)"]
                   + list(SUMMARY_API_FIELDS.values())[7:])
         write_csv(output_dir / f"{prefix}_machine_hourly.csv", detail_rows,
                   fields=DETAIL_FIELDS)

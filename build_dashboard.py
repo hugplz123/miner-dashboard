@@ -151,7 +151,12 @@ def load_lark_power(path, expected_date=None):
     if snapshot.get("schema_version") != "1.0":
         raise ValueError(f"Unsupported Lark-OM表 power schema in {path}")
     record_schema = str(snapshot.get("record_schema") or "").strip()
-    if record_schema not in ("", "legacy_capacity_v1", "running_power_v2"):
+    if record_schema not in (
+        "",
+        "legacy_capacity_v1",
+        "running_power_v2",
+        "capacity_v3",
+    ):
         raise ValueError(
             f"Unsupported Lark-OM表 record_schema in {path}: "
             f"{record_schema!r}"
@@ -359,6 +364,41 @@ def attach_lark_power(warehouses, snapshots):
     }
 
 
+def apply_lark_power_limits(warehouses, snapshots, rows_by_date):
+    """Use the latest valid Lark power ceiling as each box's fixed theory."""
+    latest_limits = {}
+    for date, (_, by_key) in sorted(snapshots.items()):
+        for key, record in by_key.items():
+            limit = finite_number(record.get("power_limit_kw"))
+            if limit is not None and limit > 0:
+                latest_limits[key] = (date, limit)
+
+    warehouse_keys = {}
+    updated = 0
+    for warehouse in warehouses.values():
+        key = (
+            str(warehouse["data_center_name"]).strip().casefold(),
+            normalize_warehouse_number(warehouse["warehouse_name"]),
+        )
+        warehouse_keys[(warehouse["data_center_id"], warehouse["warehouse_id"])] = key
+        limit_row = latest_limits.get(key)
+        if limit_row:
+            warehouse["theoretical_power_kw"] = limit_row[1]
+            warehouse["theoretical_power_source"] = "lark_power_limit"
+            warehouse["theoretical_power_source_date"] = limit_row[0]
+            updated += 1
+
+    for rows in rows_by_date.values():
+        for row in rows:
+            key = warehouse_keys.get(
+                (row["data_center_id"], row["warehouse_id"])
+            )
+            limit_row = latest_limits.get(key)
+            if limit_row:
+                row["theoretical_power_kw"] = limit_row[1]
+    return updated
+
+
 def site_lark_power(warehouses, snapshots, date):
     loaded = snapshots.get(date)
     if not loaded:
@@ -378,22 +418,44 @@ def site_lark_power(warehouses, snapshots, date):
         if any("mounted_power_kw" in record for record in matched)
         else "running_power_v2"
     )
-    running_power_key = (
+    uses_running_power = record_schema == "running_power_v2"
+    mounted_power_key = (
         "running_power_kw"
-        if record_schema == "running_power_v2"
+        if uses_running_power
         else "mounted_power_kw"
     )
-    running_machine_key = (
+    mounted_machine_key = (
         "running_machine_count"
-        if record_schema == "running_power_v2"
+        if uses_running_power
         else "mounted_machine_count"
     )
-    reserved_values = [
-        record.get("reserved_power_kw")
-        for record in matched
-        if isinstance(record.get("reserved_power_kw"), (int, float))
-        and math.isfinite(float(record["reserved_power_kw"]))
-    ]
+    mounted_power = numeric_sum(matched, mounted_power_key)
+    mounted_power_count = numeric_count(matched, mounted_power_key)
+    mounted_machine_count = numeric_sum(matched, mounted_machine_key)
+    running_power = (
+        numeric_sum(matched, "running_power_kw")
+        if uses_running_power else None
+    )
+    running_power_count = (
+        numeric_count(matched, "running_power_kw")
+        if uses_running_power else 0
+    )
+    running_machine_count = (
+        int(numeric_sum(matched, "running_machine_count"))
+        if uses_running_power else None
+    )
+    reserved_power = (
+        None if uses_running_power
+        else numeric_sum(matched, "reserved_power_kw")
+    )
+    reserved_power_count = (
+        0 if uses_running_power
+        else numeric_count(matched, "reserved_power_kw")
+    )
+    occupied_slots = (
+        None if uses_running_power
+        else int(numeric_sum(matched, "occupied_slots"))
+    )
     return {
         "available": True,
         "snapshot_date": date,
@@ -402,16 +464,18 @@ def site_lark_power(warehouses, snapshots, date):
         "matched_warehouses": len(matched),
         "total_warehouses": len(warehouses),
         "missing_capacity_warehouses": sum(
-            not isinstance(record.get(running_power_key), (int, float))
+            not isinstance(record.get(mounted_power_key), (int, float))
             for record in matched
         ),
-        "running_power_kw": numeric_sum(matched, running_power_key),
-        "running_power_count": numeric_count(matched, running_power_key),
-        "running_machine_count": int(
-            numeric_sum(matched, running_machine_key)
-        ),
-        "reserved_power_kw": sum(reserved_values) if reserved_values else None,
-        "reserved_power_count": len(reserved_values),
+        "mounted_power_kw": mounted_power,
+        "mounted_power_count": mounted_power_count,
+        "mounted_machine_count": int(mounted_machine_count),
+        "running_power_kw": running_power,
+        "running_power_count": running_power_count,
+        "running_machine_count": running_machine_count,
+        "reserved_power_kw": reserved_power,
+        "reserved_power_count": reserved_power_count,
+        "occupied_slots": occupied_slots,
         "power_limit_kw": numeric_sum(matched, "power_limit_kw"),
         "total_slots": int(numeric_sum(matched, "total_slots")),
     }
@@ -919,6 +983,10 @@ def build(summary_root, destination, days=7, end_date=None, detail_root=None,
         lark_history_dir, lark_power_path
     )
     lark_metadata = attach_lark_power(warehouses, lark_snapshots)
+    if lark_metadata:
+        lark_metadata["power_limit_warehouses"] = apply_lark_power_limits(
+            warehouses, lark_snapshots, rows_by_date
+        )
     meter_rows, meter_metadata = attach_supabase_power(
         warehouses, supabase_snapshot
     )

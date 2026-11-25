@@ -124,12 +124,13 @@ function localDayRangeLabel(date) {
 function compactLocalDayRange(date) {
   const [year, month, day] = String(date).split("-").map(Number);
   if (!year || !month || !day) return String(date);
-  const start = localDateParts(new Date(Date.UTC(year, month - 1, day, 0)));
-  const end = localDateParts(new Date(Date.UTC(year, month - 1, day + 1, 0)));
+  const startDate = new Date(Date.UTC(year, month - 1, day, 0));
+  const endDate = new Date(Date.UTC(year, month - 1, day + 1, 0));
+  const start = localDateParts(startDate);
+  const end = localDateParts(endDate);
   if (!start || !end) return String(date);
-  const startDate = `${start.month}-${start.day}`;
-  const endDate = `${end.month}-${end.day}`;
-  return `${startDate} ${start.hour}:00–${endDate} ${end.hour}:00`;
+  return `${start.month}-${start.day} ${start.hour}:00–`
+    + `${end.month}-${end.day} ${end.hour}:00 ${timeZoneOffsetLabel(startDate)}`;
 }
 
 function localUtcDayStartShort(date) {
@@ -1002,7 +1003,7 @@ function renderCoverage(daily, site, lark) {
     ?? (observed === expected && partialWarehouses === 0);
   const primaryDetails = [
     site.data_center_name,
-    `场地 ${coverageLabel(observed, expected)} 小时有数据`,
+    `场地 ${coverageLabel(observed, expected)}有数据`,
   ];
   if (partialWarehouses) {
     primaryDetails.push(
@@ -1108,7 +1109,7 @@ function larkPanelHTML(row) {
   const capacityRows = capacityRow(
     "在架功率",
     larkRunningPower(lark),
-    `在架 ${larkRunningMachines(lark) ?? "—"} / 机位总数 ${lark.total_slots ?? "—"} 台`,
+    `在架 ${larkRunningMachines(lark) ?? "—"} / 占位 ${lark.occupied_slots ?? "—"} 台`,
   ) + capacityRow(
     "占位功率",
     lark.reserved_power_kw,
@@ -1416,7 +1417,7 @@ function render() {
   $("notice").innerHTML = `
     <div class="notice-line">
       <b>时区</b>
-      <span>按浏览器本地时区 ${esc(TIMEZONE_SCOPE)} 展示，数据仍按 UTC 小时存储。</span>
+      <span>按浏览器时区 ${esc(TIMEZONE_SCOPE)} 展示，数据仍按 UTC 小时存储。</span>
     </div>
     <div class="notice-line">
       <b>电表</b>
