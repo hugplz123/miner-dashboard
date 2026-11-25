@@ -19,9 +19,136 @@ const sum = (rows, key) => rows.reduce((total, row) => total + (row[key] ?? 0), 
 const compactDate = date => String(date).replaceAll("-", "");
 const shortDate = date => String(date).slice(5);
 const DATA_TIMEZONE = "UTC+0";
-const DATA_TIME_ZONE = "UTC";
-const hourLabel = hour => `${String(hour).slice(0, 4)}-${String(hour).slice(4, 6)}-${String(hour).slice(6, 8)} ${String(hour).slice(8, 10)}:00 ${DATA_TIMEZONE}`;
-const hourOnlyLabel = hour => `${String(hour).slice(8, 10)}:00 ${DATA_TIMEZONE}`;
+const DISPLAY_TIME_ZONE =
+  Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+
+function timeZoneOffsetLabel(date = new Date(), timeZone = DISPLAY_TIME_ZONE) {
+  const offset = (
+  new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    timeZoneName: "longOffset",
+  }).formatToParts(date).find(part => part.type === "timeZoneName")?.value
+  || "GMT"
+  ).replace("GMT", "UTC");
+  if (offset === "UTC") return "UTC+0";
+  return offset
+    .replace(/^UTC([+-])0(\d):00$/, "UTC$1$2")
+    .replace(/^UTC([+-])00:00$/, "UTC+0");
+}
+
+const DISPLAY_TIMEZONE_LABEL = timeZoneOffsetLabel();
+const TIMEZONE_SCOPE =
+  `${DISPLAY_TIMEZONE_LABEL} · ${DISPLAY_TIME_ZONE}`;
+
+function utcHourDate(hour) {
+  const text = String(hour ?? "").padStart(10, "0");
+  if (!/^\d{10}$/.test(text)) return null;
+  const year = Number(text.slice(0, 4));
+  const month = Number(text.slice(4, 6));
+  const day = Number(text.slice(6, 8));
+  const hourIndex = Number(text.slice(8, 10));
+  const date = new Date(Date.UTC(year, month - 1, day, hourIndex));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function localDateParts(date, includeSeconds = false) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) return null;
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: DISPLAY_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    ...(includeSeconds ? { second: "2-digit" } : {}),
+    hourCycle: "h23",
+  }).formatToParts(date);
+  return Object.fromEntries(
+    parts
+      .filter(part => part.type !== "literal")
+      .map(part => [part.type, part.value]),
+  );
+}
+
+function localDateLabel(date) {
+  const parts = localDateParts(date);
+  return parts ? `${parts.year}-${parts.month}-${parts.day}` : "—";
+}
+
+function hourLabel(hour) {
+  const date = utcHourDate(hour);
+  const parts = localDateParts(date);
+  return parts
+    ? `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute} ${timeZoneOffsetLabel(date)}`
+    : `${String(hour)} ${DISPLAY_TIMEZONE_LABEL}`;
+}
+
+function hourOnlyLabel(hour) {
+  const date = utcHourDate(hour);
+  const parts = localDateParts(date);
+  return parts
+    ? `${parts.month}-${parts.day} ${parts.hour}:${parts.minute} ${timeZoneOffsetLabel(date)}`
+    : `${String(hour)} ${DISPLAY_TIMEZONE_LABEL}`;
+}
+
+function chartHourLabel(hour) {
+  const date = utcHourDate(hour);
+  const parts = localDateParts(date);
+  return parts ? `${parts.month}-${parts.day} ${parts.hour}:00` : String(hour);
+}
+
+function localHourClockLabel(hour) {
+  const parts = localDateParts(utcHourDate(hour));
+  return parts ? `${parts.hour}:${parts.minute}` : String(hour).slice(-2);
+}
+
+function utcHourIndex(date, index) {
+  return Number(`${compactDate(date)}${String(index).padStart(2, "0")}`);
+}
+
+function localDayRangeLabel(date) {
+  const [year, month, day] = String(date).split("-").map(Number);
+  if (!year || !month || !day) return String(date);
+  const start = new Date(Date.UTC(year, month - 1, day, 0));
+  const end = new Date(Date.UTC(year, month - 1, day + 1, 0));
+  const startParts = localDateParts(start);
+  const endParts = localDateParts(end);
+  if (!startParts || !endParts) return String(date);
+  const startDate = `${startParts.year}-${startParts.month}-${startParts.day}`;
+  const endDate = `${endParts.year}-${endParts.month}-${endParts.day}`;
+  const range =
+    `${startDate} ${startParts.hour}:00–${endDate} ${endParts.hour}:00`;
+  return `${range} ${timeZoneOffsetLabel(start)}`;
+}
+
+function compactLocalDayRange(date) {
+  const [year, month, day] = String(date).split("-").map(Number);
+  if (!year || !month || !day) return String(date);
+  const start = localDateParts(new Date(Date.UTC(year, month - 1, day, 0)));
+  const end = localDateParts(new Date(Date.UTC(year, month - 1, day + 1, 0)));
+  if (!start || !end) return String(date);
+  const startDate = `${start.month}-${start.day}`;
+  const endDate = `${end.month}-${end.day}`;
+  return `${startDate} ${start.hour}:00–${endDate} ${end.hour}:00`;
+}
+
+function localUtcDayStartShort(date) {
+  const [year, month, day] = String(date).split("-").map(Number);
+  if (!year || !month || !day) return String(date);
+  const parts = localDateParts(new Date(Date.UTC(year, month - 1, day, 0)));
+  return parts ? `${parts.month}-${parts.day}` : shortDate(date);
+}
+
+function applyDisplayTimezoneLabels() {
+  $("timezone-badge").textContent = `近 7 天 · ${TIMEZONE_SCOPE}`;
+  $("date-label-text").textContent = `日期 · ${DISPLAY_TIMEZONE_LABEL}`;
+  $("hour-label-text").textContent = `小时 · ${DISPLAY_TIMEZONE_LABEL}`;
+  $("timezone-footer").textContent =
+    `展示时间按浏览器本地时区（${TIMEZONE_SCOPE}）；UTC 小时仅用于数据存储。`;
+  $("date").title = `按浏览器本地时区 ${TIMEZONE_SCOPE} 展示 UTC 数据日`;
+  $("hour").title = `按浏览器本地时区 ${TIMEZONE_SCOPE} 展示小时`;
+}
+
 const expectedHoursPerDay = 24;
 const MACHINE_POWER_FIELDS = [
   "machine_hour_peak_power_w",
@@ -56,10 +183,15 @@ let distributionWarehouseId = null;
 let powerLimitFilter = "all", detailPowerLimitW = null;
 let meterTrendState = null;
 let meterTrendRequestVersion = 0;
+let detailDragState = null;
 const hourCache = new Map();
 const dayTrendCache = new Map();
 const detailSummaryCache = new Map();
 const detailMachineCache = new Map();
+const detailColumnOrder = {};
+const detailSortState = {
+  machine_rows: { key: "avg_power_w", direction: "desc" },
+};
 
 function iconize() {
   if (window.lucide) window.lucide.createIcons();
@@ -253,17 +385,18 @@ function syncTimeLabel(value) {
   if (Number.isNaN(date.getTime())) return String(value);
   return date.toLocaleString("zh-CN", {
     month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
-    hour12: false, timeZone: DATA_TIME_ZONE,
-  }) + ` ${DATA_TIMEZONE}`;
+    hour12: false, timeZone: DISPLAY_TIME_ZONE,
+  }) + ` ${timeZoneOffsetLabel(date)}`;
 }
 
 function timestampLabel(value, includeSeconds = false) {
   if (!value) return "";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return String(value);
-  const iso = date.toISOString();
-  const seconds = includeSeconds ? `:${iso.slice(17, 19)}` : "";
-  return `${iso.slice(0, 16).replace("T", " ")}${seconds} ${DATA_TIMEZONE}`;
+  const parts = localDateParts(date, includeSeconds);
+  if (!parts) return String(value);
+  const seconds = includeSeconds ? `:${parts.second}` : "";
+  return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}${seconds} ${timeZoneOffsetLabel(date)}`;
 }
 
 function machineSampleLabel(row) {
@@ -366,10 +499,14 @@ function larkRunningMachines(record) {
     : record.mounted_machine_count;
 }
 
+function larkCapacityCountLabel(record) {
+  return "在架";
+}
+
 function warehouseTheoreticalPower(row) {
   for (const value of [
-    row?.theoretical_power_kw,
     row?.lark_power?.power_limit_kw,
+    row?.theoretical_power_kw,
   ]) {
     const power = Number(value);
     if (Number.isFinite(power) && power > 0) return power;
@@ -381,7 +518,10 @@ function dailyFor(date, site = currentSite()) {
   return (site?.daily_summary || []).find(item => item.date === date);
 }
 
-function siteTheoreticalPower(item = dailyFor(selectedDate)) {
+function siteTheoreticalPower(item = dailyFor(selectedDate), site = currentSite()) {
+  const date = item?.date || selectedDate;
+  const larkTotal = Number(site?.lark_power_by_date?.[date]?.power_limit_kw);
+  if (Number.isFinite(larkTotal) && larkTotal > 0) return larkTotal;
   const configured = Number(item?.configured_theoretical_power_kw);
   if (Number.isFinite(configured)) return configured;
   const observed = item?.hours_with_data ?? item?.hours?.length;
@@ -451,12 +591,14 @@ function larkPowerSnapshot(site = currentSite(), date = selectedDate) {
     || (rows.some(larkRecordUsesRunningPower)
       ? "running_power_v2"
       : "legacy_capacity_v1");
-  const runningPowerKey = recordSchema === "running_power_v2"
+  const usesRunningPower = recordSchema === "running_power_v2";
+  const mountedPowerKey = usesRunningPower
     ? "running_power_kw" : "mounted_power_kw";
-  const runningMachineKey = recordSchema === "running_power_v2"
+  const mountedMachineKey = usesRunningPower
     ? "running_machine_count" : "mounted_machine_count";
-  const runningMachines = available
-    ? finiteSum(rows, runningMachineKey) : null;
+  const mountedMachines = available
+    ? finiteSum(rows, mountedMachineKey) : null;
+  const mountedPower = available ? finiteSum(rows, mountedPowerKey) : null;
   const totalSlots = available ? finiteSum(rows, "total_slots") : null;
   return {
     available,
@@ -464,15 +606,24 @@ function larkPowerSnapshot(site = currentSite(), date = selectedDate) {
     snapshotDate: available ? date : null,
     syncedAt: available ? siteSnapshot?.synced_at : null,
     matched: rows.length,
-    runningPower: available ? finiteSum(rows, runningPowerKey) : null,
-    runningPowerCount: available ? finiteCount(rows, runningPowerKey) : 0,
-    runningMachines,
+    mountedPower,
+    mountedPowerCount: available ? finiteCount(rows, mountedPowerKey) : 0,
+    mountedMachines,
+    mountedMachineCount: available
+      ? finiteCount(rows, mountedMachineKey) : 0,
+    runningPower: mountedPower,
+    runningPowerCount: available ? finiteCount(rows, mountedPowerKey) : 0,
+    runningMachines: mountedMachines,
     runningMachineCount: available
-      ? finiteCount(rows, runningMachineKey) : 0,
+      ? finiteCount(rows, mountedMachineKey) : 0,
     totalSlots,
-    reservedPower: available ? finiteSum(rows, "reserved_power_kw") : null,
-    reservedPowerCount: available ? finiteCount(rows, "reserved_power_kw") : 0,
-    occupiedSlots: available ? sum(rows, "occupied_slots") : null,
+    reservedPower: available
+      ? finiteSum(rows, "reserved_power_kw") : null,
+    reservedPowerCount: available
+      ? finiteCount(rows, "reserved_power_kw") : 0,
+    occupiedSlots: available
+      ? finiteSum(rows, "occupied_slots") : null,
+    powerLimit: available ? finiteSum(rows, "power_limit_kw") : null,
   };
 }
 
@@ -540,7 +691,7 @@ function coverageParts(daily, site = currentSite()) {
 }
 
 function hourCoverageLabel(hour) {
-  return `${String(hour).slice(-2)}:00`;
+  return chartHourLabel(hour);
 }
 
 function incompleteWarehouseRows(site = currentSite(), date = selectedDate) {
@@ -598,7 +749,7 @@ function openCoverageDialog() {
   const noData = incomplete.filter(warehouse => warehouse.observedHours === 0);
   $("coverage-dialog-title").textContent = `${site?.data_center_name || ""} · 矿箱完整性`;
   $("coverage-dialog-meta").textContent =
-    `${selectedDate} · ${DATA_TIMEZONE} · 完整矿箱 ${completeWarehouses ?? "—"}/${totalWarehouses ?? "—"} · `
+    `${localDayRangeLabel(selectedDate)} · UTC 数据日 ${selectedDate} · 完整矿箱 ${completeWarehouses ?? "—"}/${totalWarehouses ?? "—"} · `
     + "按矿机小时数据覆盖判定；0 小时表示当日无数据";
   $("coverage-dialog-summary").innerHTML = `
     <div><span>完整矿箱</span><strong>${esc(completeWarehouses ?? "—")}/${esc(totalWarehouses ?? "—")}</strong></div>
@@ -612,10 +763,10 @@ function openCoverageDialog() {
             <span>${warehouse.observedHours}/${warehouse.expectedHours} 小时</span>
             <em>${warehouse.observedHours ? "部分小时缺失" : "当日无数据"}</em>
           </div>
-          <p>缺失 UTC 小时</p>
+          <p>缺失小时（浏览器本地时间）</p>
           <div class="coverage-missing-hours">${missingHoursHTML(warehouse)}</div>
         </article>`).join("")}</div>`
-    : `<div class="coverage-all-complete"><i data-lucide="circle-check"></i><strong>全部矿箱数据完整</strong><span>${selectedDate} 的 ${totalWarehouses ?? "—"} 个矿箱均覆盖 ${daily?.expected_hours ?? expectedHoursPerDay} 小时。</span></div>`;
+    : `<div class="coverage-all-complete"><i data-lucide="circle-check"></i><strong>全部矿箱数据完整</strong><span>${localDayRangeLabel(selectedDate)} 的 ${totalWarehouses ?? "—"} 个矿箱均覆盖 ${daily?.expected_hours ?? expectedHoursPerDay} 小时。</span></div>`;
   $("coverage-dialog").showModal();
   iconize();
 }
@@ -640,7 +791,11 @@ function populateDates(preferredDate) {
     const daily = dailyFor(date);
     const { observed, expected, completeWarehouses, totalWarehouses } =
       coverageParts(daily);
-    return `<option value="${esc(date)}">${esc(date)} · ${DATA_TIMEZONE} · 运行 ${esc(coverageLabel(observed, expected))} · 完整 ${esc(completeWarehouses ?? "—")}/${esc(totalWarehouses ?? "—")} 箱</option>`;
+    const fullTitle =
+      `UTC 数据日 ${date} · ${localDayRangeLabel(date)} · `
+      + `运行 ${coverageLabel(observed, expected)} · `
+      + `完整 ${completeWarehouses ?? "—"}/${totalWarehouses ?? "—"} 箱`;
+    return `<option value="${esc(date)}" title="${esc(fullTitle)}">${esc(compactLocalDayRange(date))}</option>`;
   }).join("");
   if (!dates.length) return;
   $("date").value = preferredDate && dates.includes(preferredDate)
@@ -845,27 +1000,29 @@ function renderCoverage(daily, site, lark) {
   const minimumHours = daily?.min_warehouse_hours;
   const complete = daily?.is_fully_complete
     ?? (observed === expected && partialWarehouses === 0);
-  const details = [
-    `${selectedDate} 场地 ${coverageLabel(observed, expected)}有数据。`,
+  const primaryDetails = [
+    site.data_center_name,
+    `场地 ${coverageLabel(observed, expected)} 小时有数据`,
   ];
   if (partialWarehouses) {
-    details.push(
-      `${partialWarehouses} 个有数据矿箱未满 ${expected} 小时${
-        minimumHours == null ? "" : `，最少 ${minimumHours} 小时`
-      }。`,
+    primaryDetails.push(
+      `${partialWarehouses} 个矿箱小时不完整${
+        minimumHours == null ? "" : `，最少 ${minimumHours} h`
+      }`,
     );
   }
   if (warehousesWithoutData) {
-    details.push(`${warehousesWithoutData} 个矿箱当日无数据。`);
+    primaryDetails.push(`${warehousesWithoutData} 个矿箱当日无数据`);
   }
+  const secondaryDetails = [`展示时区 ${TIMEZONE_SCOPE}`];
   if (finite(daily?.meter_covered_warehouses)) {
-    details.push(
-      `电表实测覆盖 ${daily.meter_covered_warehouses}/${daily.meter_total_warehouses ?? totalWarehouses} 个矿箱。`,
+    secondaryDetails.push(
+      `电表覆盖 ${daily.meter_covered_warehouses}/${daily.meter_total_warehouses ?? totalWarehouses} 箱`,
     );
   }
-  details.push(lark.available
-    ? `Lark-OM表使用 ${selectedDate} 当日快照。`
-    : `${selectedDate} 没有 Lark-OM表功率快照，不沿用其他日期。`);
+  secondaryDetails.push(lark.available
+    ? "容量快照已匹配"
+    : "当日容量快照缺失");
   const element = $("coverage");
   element.className = `coverage-note ${
     complete ? "complete" : "incomplete"
@@ -873,8 +1030,11 @@ function renderCoverage(daily, site, lark) {
   element.dataset.complete = complete ? "true" : "false";
   element.innerHTML = `
     <div class="coverage-copy">
-      <strong>${complete ? "数据完整" : "数据不完整"}</strong>
-      <span>${esc(site.data_center_name)} · 数据时区 ${DATA_TIMEZONE} · ${esc(details.join(" "))}</span>
+      <div class="coverage-copy-main">
+        <strong>${complete ? "数据完整" : "数据不完整"}</strong>
+        <span>${esc(primaryDetails.join(" · "))}</span>
+      </div>
+      <small>${esc(secondaryDetails.join(" · "))}</small>
     </div>
     <div class="coverage-actions">
       <div class="coverage-ratio">
@@ -897,26 +1057,20 @@ function larkPanelHTML(row) {
         <span>容量与负荷</span>
         <b>当日无快照</b>
       </div>
-      <div class="lark-unmatched">${esc(selectedDate)} 没有 Lark-OM表容量记录，未使用其他日期替代。</div>
+      <div class="lark-unmatched">${esc(localDayRangeLabel(selectedDate))} 没有当日在架与占位容量记录，未使用其他日期替代。</div>
     </div>`;
   }
-  const usesRunningPower = larkRecordUsesRunningPower(lark);
-  const capacityFields = usesRunningPower
-    ? [
-        larkRunningPower(lark),
-        lark.running_machine_count,
-        lark.total_slots,
-      ]
-    : [
-        lark.mounted_power_kw,
-        lark.reserved_power_kw,
-        lark.mounted_machine_count,
-        lark.occupied_slots,
-      ];
+  const capacityFields = [
+    larkRunningPower(lark),
+    lark.reserved_power_kw,
+    larkRunningMachines(lark),
+    lark.occupied_slots,
+    lark.power_limit_kw,
+  ];
   const presentFields = capacityFields.filter(finite).length;
   const status = presentFields === capacityFields.length
     ? "已匹配" : presentFields ? "部分缺失" : "字段缺失";
-  const theory = row.theoretical_power_kw;
+  const theory = warehouseTheoreticalPower(row);
   const capacityRow = (label, value, note) => {
     const noteHTML = note
       ? `<div class="capacity-note">${esc(note)}</div>`
@@ -951,27 +1105,21 @@ function larkPanelHTML(row) {
       ${noteHTML}
     </div>`;
   };
-  const capacityRows = usesRunningPower
-    ? capacityRow(
-        "Lark-OM表运行功率",
-        lark.running_power_kw,
-        `运行 ${lark.running_machine_count ?? "—"} / 机位总数 ${lark.total_slots ?? "—"} 台`,
-      )
-    : capacityRow(
-        "Lark-OM表在架功率",
-        lark.mounted_power_kw,
-        `在架 ${lark.mounted_machine_count ?? "—"} 台`,
-      ) + capacityRow(
-        "Lark-OM表占位功率",
-        lark.reserved_power_kw,
-        `占位 ${lark.occupied_slots ?? "—"}/${lark.total_slots ?? "—"} 个槽位`,
-      );
+  const capacityRows = capacityRow(
+    "在架功率",
+    larkRunningPower(lark),
+    `在架 ${larkRunningMachines(lark) ?? "—"} / 机位总数 ${lark.total_slots ?? "—"} 台`,
+  ) + capacityRow(
+    "占位功率",
+    lark.reserved_power_kw,
+    `占位 ${lark.occupied_slots ?? "—"} 个机位`,
+  );
   return `<div class="lark-power-panel">
     <div class="lark-panel-head">
       <span>矿箱容量刻度 · 矿箱理论功率 ${finite(theory) ? `${fmt(theory)} kW` : "未配置"}</span>
       <b>${status}</b>
     </div>
-    <div class="capacity-grid${usesRunningPower ? " single" : ""}">
+    <div class="capacity-grid">
       ${capacityRows}
     </div>
   </div>`;
@@ -1133,8 +1281,9 @@ function cardHTML(row) {
   const installedMachines = larkRunningMachines(row.lark_power);
   const reportingMismatch = finite(installedMachines)
     && Number(installedMachines) !== Number(row.machine_count);
+  const capacityCountLabel = larkCapacityCountLabel(row.lark_power);
   const reportingBadge = finite(installedMachines)
-    ? `<span class="reporting ${reportingMismatch ? "warn" : "ok"}">上报 ${row.machine_count} / 运行 ${installedMachines} 台</span>`
+    ? `<span class="reporting ${reportingMismatch ? "warn" : "ok"}">上报 ${row.machine_count} / ${capacityCountLabel} ${installedMachines} 台</span>`
     : "";
   const statusText = meterOnly
     ? "矿机小时数据缺失"
@@ -1248,7 +1397,7 @@ function render() {
   const larkMatched = lark.matched;
   const larkRunning = lark.runningPower;
   const larkReserved = lark.reservedPower;
-  const runningSchema = lark.recordSchema === "running_power_v2";
+  const larkCountLabel = "在架";
   const daily = dailyFor(selectedDate, site);
   const observedHours = daily?.hours_with_data ?? daily?.hours?.length ?? hours.length;
   const expectedHours = daily?.expected_hours ?? expectedHoursPerDay;
@@ -1261,20 +1410,32 @@ function render() {
   $("trend-title").textContent = `${site.data_center_name} ${trendLabel}`;
   $("trend").setAttribute("aria-label", `${site.data_center_name} ${trendLabel}`);
   const warehouseCoverage = `${activeWarehouseCount} 个矿箱`;
-  $("meta").textContent = `${catalog.date_range.start} 至 ${catalog.date_range.end} · 数据时区 ${DATA_TIMEZONE} · 当前 ${selectedDate} · ${siteCoverageLabel(daily, site)} · ${warehouseCoverage}`;
-  document.title = `${site.data_center_name} · 矿箱负荷 · ${DATA_TIMEZONE}`;
+  $("meta").textContent = `当前 ${selectedDate}（UTC 数据日）· 浏览器本地 ${localDayRangeLabel(selectedDate)} · ${siteCoverageLabel(daily, site)} · ${warehouseCoverage}`;
+  document.title = `${site.data_center_name} · 矿箱负荷 · ${DISPLAY_TIMEZONE_LABEL}`;
   renderCoverage(daily, site, lark);
-  $("notice").textContent = lark.available
-    ? `矿箱小时实际功率由矿机小时平均功耗汇总；矿箱电表小时实测功率取该 UTC 小时最接近整点的一条电表读数，单独展示且不覆盖矿机汇总。Lark-OM表使用 ${selectedDate} 当日快照，同步于 ${syncTimeLabel(lark.syncedAt)}。`
-    : `矿箱小时实际功率由矿机小时平均功耗汇总；矿箱电表小时实测功率取该 UTC 小时最接近整点的一条电表读数，单独展示且不覆盖矿机汇总。${selectedDate} 没有 Lark-OM表容量快照，因此不沿用其他日期容量。`;
-  $("metrics").innerHTML = `<div class="overview-power-grid${runningSchema ? " running-schema" : ""}">
+  $("notice").innerHTML = `
+    <div class="notice-line">
+      <b>时区</b>
+      <span>按浏览器本地时区 ${esc(TIMEZONE_SCOPE)} 展示，数据仍按 UTC 小时存储。</span>
+    </div>
+    <div class="notice-line">
+      <b>电表</b>
+      <span>取对应 UTC 小时最接近整点的一条读数。</span>
+    </div>
+    <div class="notice-line">
+      <b>容量</b>
+      <span>${lark.available
+        ? `使用当日在架功率与占位功率，更新于 ${esc(syncTimeLabel(lark.syncedAt))}。`
+        : "当日无在架与占位容量快照，不沿用其他日期。"}</span>
+    </div>`;
+  $("metrics").innerHTML = `<div class="overview-power-grid">
       ${overviewMetric(
         "矿箱小时实际功率", fmt(actualPower), "kW",
         powerMarginHTML(actualPower, theoryPower),
         {
           key: "actual",
           scope: currentHourLabel,
-          meta: `矿机数据覆盖 <b>${machineReportedBoxes}/${activeWarehouseCount}</b> 箱 · 上报矿机 <b>${fmt(machineCount, 0)}${lark.available && finite(lark.runningMachines) ? `/运行 ${fmt(lark.runningMachines, 0)}` : ""}</b> 台`,
+          meta: `矿机数据覆盖 <b>${machineReportedBoxes}/${activeWarehouseCount}</b> 箱 · 上报矿机 <b>${fmt(machineCount, 0)}${lark.available && finite(lark.runningMachines) ? `/${larkCountLabel} ${fmt(lark.runningMachines, 0)}` : ""}</b> 台`,
         },
       )}
       ${overviewMetric(
@@ -1287,33 +1448,33 @@ function render() {
         },
       )}
       ${overviewMetric(
-        runningSchema ? "Lark-OM表运行功率" : "Lark-OM表在架功率",
+        "在架功率",
         fmt(larkRunning), "kW",
         powerMarginHTML(larkRunning, theoryPower),
         {
-          key: runningSchema ? "running" : "mounted",
-          scope: lark.available ? "当日快照" : "无快照",
+          key: "mounted",
+          scope: lark.available ? "当日容量数据" : "当日缺失",
           meta: lark.available
-            ? `快照覆盖 ${lark.runningPowerCount}/${larkMatched} 箱${runningSchema && finite(lark.runningMachines) && finite(lark.totalSlots) ? ` · 运行 <b>${fmt(lark.runningMachines, 0)}</b> / 机位总数 <b>${fmt(lark.totalSlots, 0)}</b> 台` : ""}`
-            : "Lark-OM表快照缺失",
+            ? `容量数据覆盖 ${lark.mountedPowerCount}/${larkMatched} 箱${finite(lark.runningMachines) ? ` · ${larkCountLabel} <b>${fmt(lark.runningMachines, 0)}</b> 台` : ""}`
+            : "当日在架与占位容量数据缺失",
         },
       )}
-      ${runningSchema ? "" : overviewMetric(
-        "Lark-OM表占位功率", fmt(larkReserved), "kW",
+      ${overviewMetric(
+        "占位功率", fmt(larkReserved), "kW",
         powerMarginHTML(larkReserved, theoryPower),
         {
           key: "reserved",
-          scope: lark.available ? "当日快照" : "无快照",
+          scope: lark.available ? "当日容量数据" : "当日缺失",
           meta: lark.available
-            ? `快照覆盖 ${lark.reservedPowerCount}/${larkMatched} 箱`
-            : "Lark-OM表快照缺失",
+            ? `容量数据覆盖 ${lark.reservedPowerCount}/${larkMatched} 箱${finite(lark.occupiedSlots) ? ` · 占位 <b>${fmt(lark.occupiedSlots, 0)}</b> 个机位` : ""}`
+            : "当日在架与占位容量数据缺失",
         },
       )}
     </div>
     <div class="overview-support">
       ${overviewSupportMetric(
         "场地当日小时覆盖", `${observedHours ?? "—"}/${expectedHours}`, "小时",
-        `当前小时 ${String(hour).slice(-2)}:00`, "hour-coverage",
+        `当前小时 ${hourLabel(hour)}`, "hour-coverage",
       )}
       ${overviewSupportMetric(
         "场地小时整体功耗比", fmtRatio(ratio(currentRows)), "W/TH",
@@ -1412,8 +1573,8 @@ function dailySeries() {
     );
     return {
       key: item.date,
-      label: `${shortDate(item.date)}${complete ? "" : "*"}`,
-      periodLabel: `${item.date} · 当日有效小时平均`,
+      label: `${localUtcDayStartShort(item.date)}${complete ? "" : "*"}`,
+      periodLabel: `${localDayRangeLabel(item.date)} · 当日有效小时平均`,
       ratio: item.power_ratio_overall_w_per_th,
       actualPower: finite(item.actual_power_kw) && observed
         ? item.actual_power_kw / observed : null,
@@ -1451,7 +1612,7 @@ function hourlySeries() {
     const hasData = recordedHours.has(hour);
     return {
       key: String(hour),
-      label: `${String(hour).slice(-2)}:00`,
+      label: localHourClockLabel(hour),
       periodLabel: hourLabel(hour),
       ratio: summary?.power_ratio_overall_w_per_th ?? null,
       actualPower: hasData ? summary?.actual_power_kw ?? null : null,
@@ -1568,13 +1729,13 @@ function renderTrend() {
   ).length;
   if (trendMetric === "ratio") {
     $("chart-note").textContent = dailyMode
-      ? `近 7 天 · 每天 1 个点 · 当天全部有效小时样本功耗加权 · W/TH · 数据时区 ${DATA_TIMEZONE}${incompleteDays ? " · * 存在小时或矿箱缺口" : ""}`
-      : `${selectedDate} 当日逐小时 · 每个点为该 UTC 小时的整体功耗比 · W/TH · 数据时区 ${DATA_TIMEZONE} · 当日覆盖 ${coverageLabel(hours.length)} · 灰色带为数据缺失小时`;
+      ? `近 7 个 UTC 数据日 · 每天 1 个点 · 横轴日期按浏览器本地时段起点展示 · 当天全部有效小时样本功耗加权 · W/TH${incompleteDays ? " · * 存在小时或矿箱缺口" : ""}`
+      : `${localDayRangeLabel(selectedDate)} 当日逐小时 · 每个点为对应 UTC 小时的整体功耗比 · W/TH · 展示时区 ${TIMEZONE_SCOPE} · 当日覆盖 ${coverageLabel(hours.length)} · 灰色带为数据缺失小时`;
   }
   else {
     $("chart-note").textContent = dailyMode
-      ? `近 7 天 · 每天 1 个点 · 矿箱和电表均为当日有效小时平均，最大功率为当日电表小时峰值 · kW · 数据时区 ${DATA_TIMEZONE}${incompleteDays ? " · * 存在小时或矿箱缺口" : ""}`
-      : `${selectedDate} 当日逐小时 · 矿箱实际功率为矿机小时平均功耗汇总，电表为每个 UTC 小时实测值，当日电表最大功率为整日参考 · kW · 数据时区 ${DATA_TIMEZONE} · 当日覆盖 ${coverageLabel(hours.length)} · 灰色带为数据缺失小时`;
+      ? `近 7 个 UTC 数据日 · 每天 1 个点 · 横轴日期按浏览器本地时段起点展示 · 矿箱和电表均为当日有效小时平均，最大功率为当日电表小时峰值 · kW${incompleteDays ? " · * 存在小时或矿箱缺口" : ""}`
+      : `${localDayRangeLabel(selectedDate)} 当日逐小时 · 矿箱实际功率为矿机小时平均功耗汇总，电表为对应 UTC 小时实测值，当日电表最大功率为整日参考 · kW · 展示时区 ${TIMEZONE_SCOPE} · 当日覆盖 ${coverageLabel(hours.length)} · 灰色带为数据缺失小时`;
   }
   const selectedKey = trendMode === "daily" ? selectedDate : String($("hour").value);
   const allValues = definitions.flatMap(definition =>
@@ -1713,7 +1874,7 @@ function renderTrend() {
   const hits = series.map((item, index) => {
     const detail = item.detail || {};
     const dateText = dailyMode
-      ? item.key
+      ? item.periodLabel
       : hourLabel(Number(item.key));
     const coverage = trendMode === "daily" && detail.expected_hours
       ? ` · ${siteCoverageLabel(detail)}`
@@ -1793,7 +1954,7 @@ function showTooltip(event) {
   const item = series[index];
   const detail = item.detail || {};
   const dateText = trendState.mode === "daily"
-    ? item.key
+    ? item.periodLabel
     : hourLabel(Number(item.key));
   const coverage = trendMode === "daily" && detail.expected_hours
     ? ` · ${siteCoverageLabel(detail)}`
@@ -1806,9 +1967,9 @@ function showTooltip(event) {
   }
   else {
     const meterLabel = trendState.mode === "daily"
-      ? "当日电表平均功率" : "该 UTC 小时电表实测功率";
+      ? "当日电表平均功率" : "该小时电表实测功率";
     const actualLabel = trendState.mode === "daily"
-      ? "当日矿箱平均功率" : "该 UTC 小时矿箱实际功率";
+      ? "当日矿箱平均功率" : "该小时矿箱实际功率";
     const peakHourText = finite(item.meterPeakHour)
       ? ` · 峰值小时 ${hourOnlyLabel(Number(item.meterPeakHour))}`
       : "";
@@ -1844,7 +2005,7 @@ async function selectDate(date, preferredHour) {
     if (candidate) $("hour").value = candidate;
   }
   const daily = dailyFor(date);
-  $("meta").textContent = `${catalog.date_range.start} 至 ${catalog.date_range.end} · 数据时区 ${DATA_TIMEZONE} · 正在读取 ${date} · ${siteCoverageLabel(daily)} · ${currentSite().warehouses_with_data} 个矿箱`;
+  $("meta").textContent = `正在读取 ${date}（UTC 数据日）· 浏览器本地 ${localDayRangeLabel(date)} · ${siteCoverageLabel(daily)} · ${currentSite().warehouses_with_data} 个矿箱`;
   const hour = Number($("hour").value);
   setLoading(true, `正在加载 ${hourLabel(hour)} 的数据，请稍候…`);
   try {
@@ -2111,6 +2272,9 @@ function renderMeterTrendChart(state) {
         </circle>`
       : ""}`
     : "").join("");
+  const hourForIndex = index => Number(
+    `${compactDate(state.date)}${String(index).padStart(2, "0")}`,
+  );
   const hitWidth = plotW / Math.max(expectedHoursPerDay - 1, 1);
   const hits = state.hours.map((point, index) => {
     const left = Math.max(pad.left, x(index) - hitWidth / 2);
@@ -2128,7 +2292,7 @@ function renderMeterTrendChart(state) {
     return `<rect class="meter-trend-hit" data-meter-trend-hour="${index}"
       x="${left}" y="${pad.top}" width="${Math.max(1, right - left)}"
       height="${plotH}" tabindex="0" role="button"
-      aria-label="${esc(`${String(index).padStart(2, "0")}:00 UTC+0，${description}`)}"></rect>`;
+      aria-label="${esc(`${hourLabel(hourForIndex(index))}，${description}`)}"></rect>`;
   }).join("");
   const selectedIndex = Number.isInteger(state.hoveredHourIndex)
     ? state.hoveredHourIndex : null;
@@ -2148,7 +2312,7 @@ function renderMeterTrendChart(state) {
   const tickHours = [0, 6, 12, 18, 23];
   const labels = tickHours.map(index =>
     `<text class="meter-trend-hour" x="${x(index)}" y="${height - 8}"
-      text-anchor="${index === 0 ? "start" : index === 23 ? "end" : "middle"}">${String(index).padStart(2, "0")}:00</text>`
+      text-anchor="${index === 0 ? "start" : index === 23 ? "end" : "middle"}">${localHourClockLabel(hourForIndex(index))}</text>`
   ).join("");
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.setAttribute("width", width);
@@ -2165,14 +2329,14 @@ function renderMeterTrendChart(state) {
       <div class="meter-trend-tooltip-time">${esc(
         finite(selectedPoint.meterPower)
           ? selectedPoint.sampleLabel
-          : `${String(selectedIndex).padStart(2, "0")}:00 UTC+0`,
+          : hourLabel(hourForIndex(selectedIndex)),
       )}</div>
       <div class="meter-trend-tooltip-grid">
         <span>电表小时实测功率</span><b>${finite(selectedPoint.meterPower) ? `${fmt(selectedPoint.meterPower)} kW` : "未采集"}</b>
         <span>矿箱小时实际功率</span><b>${finite(selectedPoint.actualPower) ? `${fmt(selectedPoint.actualPower)} kW` : "未采集"}</b>
       </div>`
     : `<div class="meter-trend-tooltip-head">该小时无功率数据</div>
-      <div class="meter-trend-tooltip-time">${String(selectedIndex).padStart(2, "0")}:00 UTC+0</div>`;
+      <div class="meter-trend-tooltip-time">${esc(hourLabel(hourForIndex(selectedIndex)))}</div>`;
   tooltip.hidden = false;
   tooltip.style.left = "0px";
   tooltip.style.top = "0px";
@@ -2202,7 +2366,7 @@ function renderMeterTrend(state) {
   $("meter-trend-title").textContent =
     `${state.warehouseName} · 当日电表功率趋势`;
   $("meter-trend-meta").textContent =
-    `${state.siteName} · ${state.date} · 数据时区 ${DATA_TIMEZONE} · 小时按整点归属，采样时间标在数据点中`;
+    `${state.siteName} · ${localDayRangeLabel(state.date)} · UTC 数据日 ${state.date} · 展示时区 ${TIMEZONE_SCOPE} · 采样时间标在数据点中`;
   $("meter-trend-chart").setAttribute(
     "aria-label",
     `${state.siteName} ${state.warehouseName} ${state.date} 当日电表功率趋势`,
@@ -2230,7 +2394,7 @@ function openMeterTrend(warehouseId, warehouseName) {
   $("meter-trend-title").textContent =
     `${meterTrendState.warehouseName} · 当日电表功率趋势`;
   $("meter-trend-meta").textContent =
-    `${site.data_center_name} · ${selectedDate} · 数据时区 ${DATA_TIMEZONE}`;
+    `${site.data_center_name} · ${localDayRangeLabel(selectedDate)} · UTC 数据日 ${selectedDate}`;
   renderMeterTrendLoading("正在读取当日电表数据…");
   if (!$("meter-trend").open) $("meter-trend").showModal();
   iconize();
@@ -2325,8 +2489,9 @@ function detailMetricGroup(key, title, note, metrics) {
 function renderDetailSummary(row) {
   $("detail-title").textContent = `${row.warehouse_name} · 矿箱详情`;
   const runningMachines = larkRunningMachines(row.lark_power);
+  const capacityCountLabel = larkCapacityCountLabel(row.lark_power);
   const reporting = finite(runningMachines)
-    ? ` · 上报 ${row.machine_count}/运行 ${fmt(runningMachines, 0)} 台`
+    ? ` · 上报 ${row.machine_count}/${capacityCountLabel} ${fmt(runningMachines, 0)} 台`
     : "";
   $("detail-meta").textContent = `${row.data_center_name} · 采样时间 ${machineSampleLabel(row)} · 本箱覆盖 ${coverageLabel(warehouseHours(row.warehouse_id))}${reporting}`;
   const gap = powerGap(row);
@@ -2425,10 +2590,10 @@ function renderDetailSummary(row) {
         value: fmt(row.lark_power?.unit_theoretical_power_kw, 2),
         unit: "kW",
         note: finite(row.lark_power?.unit_theoretical_power_kw)
-          ? "Lark-OM表配置"
+          ? "当日容量数据配置"
           : larkRecordUsesRunningPower(row.lark_power)
-            ? "当前 Lark-OM表未提供"
-            : "Lark-OM表未配置",
+            ? "当前容量数据未提供"
+            : "容量数据未配置",
       },
       {
         label: "单机小时平均功耗比",
@@ -2625,6 +2790,236 @@ function renderPowerLimitPanel() {
   </div>`;
 }
 
+function defaultDetailColumns(detailLevel) {
+  const detailScope = {
+    template_rows: "本组",
+    model_rows: "本型号",
+    work_mode_rows: "本档位",
+    machine_rows: "单机",
+  }[detailLevel];
+  const machineMetricSubject = detailLevel === "machine_rows"
+    ? "单机" : `${detailScope}单机`;
+  const columns = [
+    detailLevel === "template_rows"
+      ? { key: "template_name", label: "算力组", type: "text", minWidth: 128 }
+      : { key: "model", label: "型号", type: "text", minWidth: 148 },
+  ];
+  if (["work_mode_rows", "machine_rows"].includes(detailLevel)) {
+    columns.push({ key: "work_mode", label: "档位", type: "text", minWidth: 164 });
+  }
+  if (detailLevel === "machine_rows") {
+    columns.push({ key: "ip", label: "IP", type: "text", minWidth: 126 });
+  } else {
+    columns.push({ key: "machine_count", label: "矿机数", type: "number", minWidth: 112 });
+  }
+  columns.push(
+    {
+      key: "avg_hashrate_ths",
+      label: `${machineMetricSubject}小时平均算力`,
+      labelParts: detailLevel === "machine_rows"
+        ? ["单机小时", "平均算力"] : [machineMetricSubject, "小时平均算力"],
+      unit: "TH/s",
+      minWidth: 154,
+      type: "number",
+    },
+    {
+      key: "avg_power_w",
+      label: `${machineMetricSubject}小时平均功耗`,
+      labelParts: detailLevel === "machine_rows"
+        ? ["单机小时", "平均功耗"] : [machineMetricSubject, "小时平均功耗"],
+      unit: "W",
+      minWidth: 154,
+      type: "number",
+    },
+  );
+  if (detailLevel === "machine_rows") {
+    columns.push(
+      {
+        key: "__power_limit_w",
+        label: "单机功耗上限",
+        labelParts: ["单机", "功耗上限"],
+        unit: "W",
+        minWidth: 136,
+        type: "number",
+      },
+      {
+        key: "__power_limit_ratio",
+        label: "占单机功耗上限",
+        labelParts: ["占单机", "功耗上限"],
+        minWidth: 142,
+        type: "percent",
+      },
+      {
+        key: "__power_over_w",
+        label: "超单机功耗上限",
+        labelParts: ["超单机", "功耗上限"],
+        unit: "W",
+        minWidth: 148,
+        type: "number",
+      },
+    );
+  }
+  columns.push(
+    {
+      key: detailLevel === "machine_rows"
+        ? "power_ratio_w_per_th" : "power_ratio_overall_w_per_th",
+      label: detailLevel === "machine_rows"
+        ? "单机功耗比" : `${detailScope}矿机样本整体功耗比`,
+      labelParts: detailLevel === "machine_rows"
+        ? ["单机", "功耗比"] : [detailScope, "矿机样本", "整体功耗比"],
+      unit: "W/TH",
+      minWidth: 130,
+      type: "number",
+    },
+    {
+      key: detailLevel === "machine_rows"
+        ? "rejected_rate" : "rejected_rate_avg",
+      label: detailLevel === "machine_rows"
+        ? "单机拒绝率" : `${detailScope}单机小时平均拒绝率`,
+      labelParts: detailLevel === "machine_rows"
+        ? ["单机", "拒绝率"] : [detailScope, "单机小时", "平均拒绝率"],
+      minWidth: 122,
+      type: "percent",
+    },
+    {
+      key: detailLevel === "machine_rows"
+        ? "temperature_c" : "temperature_avg_c",
+      label: detailLevel === "machine_rows"
+        ? "单机温度" : `${detailScope}单机小时平均温度`,
+      labelParts: detailLevel === "machine_rows"
+        ? ["单机", "温度"] : [detailScope, "单机小时", "平均温度"],
+      unit: "°C",
+      minWidth: 118,
+      type: "number",
+    },
+  );
+  return columns;
+}
+
+function orderedDetailColumns(detailLevel) {
+  const defaults = defaultDetailColumns(detailLevel);
+  const byKey = new Map(defaults.map(column => [column.key, column]));
+  const savedOrder = Array.isArray(detailColumnOrder[detailLevel])
+    ? detailColumnOrder[detailLevel] : [];
+  const keys = savedOrder.filter(key => byKey.has(key));
+  for (const column of defaults) {
+    if (!keys.includes(column.key)) keys.push(column.key);
+  }
+  detailColumnOrder[detailLevel] = keys;
+  return keys.map(key => byKey.get(key));
+}
+
+function detailRowPowerState(row) {
+  return level === "machine_rows" ? machinePowerState(row) : null;
+}
+
+function detailColumnValue(row, column) {
+  const powerState = detailRowPowerState(row);
+  if (column.key === "__power_limit_w") {
+    return finite(powerState?.limit) ? Number(powerState.limit) : null;
+  }
+  if (column.key === "__power_limit_ratio") {
+    return finite(powerState?.ratio) ? Number(powerState.ratio) : null;
+  }
+  if (column.key === "__power_over_w") {
+    return powerState?.over
+      ? Number(powerState.power) - Number(powerState.limit) : null;
+  }
+  const raw = row[column.key];
+  if (column.type === "text") {
+    const text = String(raw ?? "").trim();
+    return text || null;
+  }
+  return finite(raw) ? Number(raw) : null;
+}
+
+function formatDetailColumnValue(row, column) {
+  const powerState = detailRowPowerState(row);
+  if (column.key === "__power_limit_w") return fmt(powerState?.limit, 0);
+  if (column.key === "__power_limit_ratio") {
+    return percent2(powerState == null ? null : powerState.ratio * 100);
+  }
+  if (column.key === "__power_over_w") {
+    return powerState?.over
+      ? `+${fmt(powerState.power - powerState.limit)}` : "—";
+  }
+  const raw = row[column.key];
+  if (column.type === "percent") return percent(raw);
+  if (column.type === "number" && column.key.includes("power_ratio")) {
+    return fmtRatio(raw);
+  }
+  if (column.type === "number" && finite(raw)) return fmt(raw);
+  if (column.type === "text") return raw || "未记录";
+  return raw ?? "未记录";
+}
+
+function sortDetailRows(rows, columns) {
+  const sortState = detailSortState[level];
+  if (!sortState) return rows;
+  const column = columns.find(item => item.key === sortState.key);
+  if (!column) return rows;
+  return rows
+    .map((row, index) => ({
+      row,
+      index,
+      value: detailColumnValue(row, column),
+    }))
+    .sort((left, right) => {
+      const leftMissing = left.value == null;
+      const rightMissing = right.value == null;
+      if (leftMissing || rightMissing) {
+        if (leftMissing && rightMissing) return left.index - right.index;
+        return leftMissing ? 1 : -1;
+      }
+      const comparison = column.type === "text"
+        ? String(left.value).localeCompare(
+          String(right.value),
+          "zh-CN",
+          { numeric: true, sensitivity: "base" },
+        )
+        : Number(left.value) - Number(right.value);
+      if (comparison === 0) return left.index - right.index;
+      return sortState.direction === "desc" ? -comparison : comparison;
+    })
+    .map(item => item.row);
+}
+
+function detailTableHeaderHTML(columns) {
+  const sortState = detailSortState[level];
+  return columns.map(column => {
+    const activeAscending = sortState?.key === column.key
+      && sortState.direction === "asc";
+    const activeDescending = sortState?.key === column.key
+      && sortState.direction === "desc";
+    const ariaSort = activeAscending
+      ? "ascending" : activeDescending ? "descending" : "none";
+    const labelParts = column.labelParts || [column.label];
+    const labelContext = labelParts.length > 1
+      ? labelParts.slice(0, -1).join(" · ") : "";
+    const labelMain = labelParts[labelParts.length - 1];
+    return `<th data-column-key="${esc(column.key)}" aria-sort="${ariaSort}"
+      style="min-width:${Number(column.minWidth) || 112}px">
+      <div class="detail-th">
+        <span class="detail-drag-handle" draggable="true" title="拖动调整列顺序" aria-hidden="true">
+          <i data-lucide="grip-vertical"></i>
+        </span>
+        <button type="button" class="detail-sort-button" data-detail-sort="${esc(column.key)}"
+          title="按${esc(column.label)}${column.unit ? `（${esc(column.unit)}）` : ""}排序">
+          <span class="detail-column-label">
+            ${labelContext ? `<span class="detail-column-context">${esc(labelContext)}</span>` : ""}
+            <strong class="detail-column-main">${esc(labelMain)}</strong>
+            ${column.unit ? `<small class="detail-column-unit">${esc(column.unit)}</small>` : ""}
+          </span>
+          <span class="detail-sort-arrows" aria-hidden="true">
+            <i data-lucide="chevron-up" class="detail-sort-arrow${activeAscending ? " active" : ""}"></i>
+            <i data-lucide="chevron-down" class="detail-sort-arrow${activeDescending ? " active" : ""}"></i>
+          </span>
+        </button>
+      </div>
+    </th>`;
+  }).join("");
+}
+
 function renderDetail() {
   document.querySelectorAll("[data-level]").forEach(button =>
     button.setAttribute("aria-selected", button.dataset.level === level));
@@ -2643,58 +3038,13 @@ function renderDetail() {
   if (level === "machine_rows" && powerLimitFilter !== "all") {
     rows = rows.filter(matchesPowerLimitFilter);
   }
-  if (level === "machine_rows") {
-    rows.sort((a, b) =>
-      (b.avg_power_w ?? -Infinity) - (a.avg_power_w ?? -Infinity));
-  }
-  const columns = [];
-  if (level === "template_rows") columns.push(["算力组", "template_name"]);
-  else columns.push(["型号", "model"]);
-  if (["work_mode_rows", "machine_rows"].includes(level)) columns.push(["档位", "work_mode"]);
-  if (level === "machine_rows") columns.push(["IP", "ip"]);
-  else columns.push(["矿机数", "machine_count"]);
-  const detailScope = {
-    template_rows: "本组",
-    model_rows: "本型号",
-    work_mode_rows: "本档位",
-    machine_rows: "单机",
-  }[level];
-  const machineMetricSubject = level === "machine_rows"
-    ? "单机" : `${detailScope}单机`;
-  columns.push(
-    [`${machineMetricSubject}小时平均算力 TH/s`, "avg_hashrate_ths"],
-    [`${machineMetricSubject}小时平均功耗 W`, "avg_power_w"],
-  );
-  if (level === "machine_rows") {
-    columns.push(
-      ["单机功耗上限 W", "__power_limit_w"],
-      ["占单机功耗上限", "__power_limit_ratio"],
-      ["超单机功耗上限 W", "__power_over_w"],
-    );
-  }
-  columns.push(
-    [
-      level === "machine_rows"
-        ? "单机功耗比 W/TH" : `${detailScope}矿机样本整体功耗比 W/TH`,
-      level === "machine_rows"
-        ? "power_ratio_w_per_th" : "power_ratio_overall_w_per_th",
-    ],
-    [
-      level === "machine_rows"
-        ? "单机拒绝率" : `${detailScope}单机小时平均拒绝率`,
-      level === "machine_rows" ? "rejected_rate" : "rejected_rate_avg",
-    ],
-    [
-      level === "machine_rows"
-        ? "单机温度 °C" : `${detailScope}单机小时平均温度 °C`,
-      level === "machine_rows" ? "temperature_c" : "temperature_avg_c",
-    ],
-  );
+  const columns = orderedDetailColumns(level);
+  rows = sortDetailRows(rows, columns);
   renderPowerLimitPanel();
   $("detail-focus").innerHTML = level === "machine_rows"
     ? machinePeakCardsHTML(detailSummaryRow || {})
     : "";
-  $("detail-content").innerHTML = `<table><thead><tr>${columns.map(([label]) => `<th>${label}</th>`).join("")}</tr></thead><tbody>${rows.map(row => {
+  $("detail-content").innerHTML = `<table><thead><tr>${detailTableHeaderHTML(columns)}</tr></thead><tbody>${rows.map(row => {
     const currentDetailHour = Number(detailContext?.hour);
     const isHourPeakMachine = level === "machine_rows"
       && row.ip === detailSummaryRow?.machine_hour_peak_ip
@@ -2702,8 +3052,7 @@ function renderDetail() {
     const isDailyAveragePeakMachine = level === "machine_rows"
       && row.ip === detailSummaryRow?.machine_daily_avg_peak_ip
       && currentDetailHour === Number(detailSummaryRow?.machine_daily_avg_peak_hour);
-    const powerState = level === "machine_rows"
-      ? machinePowerState(row) : null;
+    const powerState = detailRowPowerState(row);
     const rowClasses = [];
     if (isHourPeakMachine) rowClasses.push("hour-peak-machine-row");
     if (isDailyAveragePeakMachine) {
@@ -2717,23 +3066,12 @@ function renderDetail() {
       isDailyAveragePeakMachine
         ? "本行也是矿箱内矿机当日平均功率峰值矿机的最高功率小时" : "",
     ].filter(Boolean).join("；");
-    return `<tr class="${rowClasses.join(" ")}"${rowTitle ? ` title="${esc(rowTitle)}"` : ""}>${columns.map(([, key]) => {
-      let value;
-      if (key === "__power_limit_w") value = fmt(powerState?.limit, 0);
-      else if (key === "__power_limit_ratio") {
-        value = percent2(powerState == null ? null : powerState.ratio * 100);
-      } else if (key === "__power_over_w") {
-        value = powerState?.over
-          ? `+${fmt(powerState.power - powerState.limit)}` : "—";
-      } else {
-        value = key.includes("rejected") ? percent(row[key])
-          : key.includes("power_ratio") ? fmtRatio(row[key])
-            : typeof row[key] === "number" ? fmt(row[key])
-              : row[key] ?? "未记录";
-      }
+    return `<tr class="${rowClasses.join(" ")}"${rowTitle ? ` title="${esc(rowTitle)}"` : ""}>${columns.map(column => {
+      const value = formatDetailColumnValue(row, column);
       return `<td>${esc(value)}</td>`;
     }).join("")}</tr>`;
   }).join("")}</tbody></table>${rows.length ? "" : "<p>没有符合条件的明细。</p>"}`;
+  iconize();
 }
 
 $("hour").onchange = async () => {
@@ -2922,6 +3260,62 @@ document.querySelectorAll("[data-trend-metric]").forEach(button => {
   };
 });
 $("detail-search").oninput = renderDetail;
+$("detail-content").addEventListener("click", event => {
+  const button = event.target.closest("[data-detail-sort]");
+  if (!button) return;
+  const key = button.dataset.detailSort;
+  const current = detailSortState[level];
+  detailSortState[level] = {
+    key,
+    direction: current?.key === key && current.direction === "asc"
+      ? "desc" : "asc",
+  };
+  renderDetail();
+});
+$("detail-content").addEventListener("dragstart", event => {
+  const handle = event.target.closest(".detail-drag-handle");
+  const header = handle?.closest("th[data-column-key]");
+  if (!handle || !header) return;
+  detailDragState = { fromKey: header.dataset.columnKey };
+  header.classList.add("is-dragging");
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", header.dataset.columnKey);
+});
+$("detail-content").addEventListener("dragover", event => {
+  if (!detailDragState) return;
+  const header = event.target.closest("th[data-column-key]");
+  if (!header) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "move";
+  $("detail-content")
+    .querySelectorAll("th.is-drop-target")
+    .forEach(item => item.classList.remove("is-drop-target"));
+  header.classList.add("is-drop-target");
+});
+$("detail-content").addEventListener("drop", event => {
+  if (!detailDragState) return;
+  const header = event.target.closest("th[data-column-key]");
+  if (!header) return;
+  event.preventDefault();
+  const fromKey = detailDragState.fromKey;
+  const toKey = header.dataset.columnKey;
+  const order = [...(detailColumnOrder[level] || [])];
+  const fromIndex = order.indexOf(fromKey);
+  const toIndex = order.indexOf(toKey);
+  if (fromIndex >= 0 && toIndex >= 0 && fromIndex !== toIndex) {
+    const [moved] = order.splice(fromIndex, 1);
+    order.splice(toIndex, 0, moved);
+    detailColumnOrder[level] = order;
+  }
+  detailDragState = null;
+  renderDetail();
+});
+$("detail-content").addEventListener("dragend", () => {
+  detailDragState = null;
+  $("detail-content")
+    .querySelectorAll("th.is-dragging, th.is-drop-target")
+    .forEach(item => item.classList.remove("is-dragging", "is-drop-target"));
+});
 window.addEventListener("resize", () => {
   if (dayData) renderTrend();
   if ($("meter-trend").open && meterTrendState?.hours) {
@@ -2929,6 +3323,7 @@ window.addEventListener("resize", () => {
   }
 });
 bindChart();
+applyDisplayTimezoneLabels();
 
 (async () => {
   try {
