@@ -933,6 +933,41 @@ function distributionChartHTML(title, distribution, kind) {
   </section>`;
 }
 
+function templateSummaryHTML(row, templates, workModes) {
+  const groups = templates.categories
+    .filter(item => !item.missing)
+    .sort((a, b) => b.count - a.count);
+  if (!groups.length) {
+    return `<span class="distribution-summary-line is-muted">${esc(templates.emptyLabel)}</span>`;
+  }
+  const primary = groups[0];
+  const remainingMachineCount = groups
+    .slice(1)
+    .reduce((total, item) => total + item.count, 0);
+  const tooltipId = `template-summary-${
+    String(row.warehouse_id || "unknown").replace(/[^a-zA-Z0-9_-]/g, "")
+  }`;
+  return `<span class="distribution-template-summary">
+    <span class="distribution-summary-line">
+      <span class="template-summary" tabindex="0"
+        aria-describedby="${tooltipId}">
+        <span class="template-summary-prefix">算力组</span>
+        <span class="template-summary-name">${esc(primary.label)}</span>
+        <span class="template-summary-primary-count">${fmt(primary.count, 0)} 台</span>
+        ${remainingMachineCount ? `<b class="template-summary-more" title="其余算力组合计 ${fmt(remainingMachineCount, 0)} 台">+${fmt(remainingMachineCount, 0)}</b>` : ""}
+        <span class="template-summary-popover" id="${tooltipId}" role="tooltip">
+          <strong>算力组 <em>${groups.length} 组</em></strong>
+          ${groups.map(item => `<span class="template-summary-popover-row">
+            <span>${esc(item.label)}</span>
+            <b>${fmt(item.count, 0)} 台</b>
+          </span>`).join("")}
+        </span>
+      </span>
+      <span class="distribution-summary-tail"> · ${fmt(workModes.validCategoryCount, 0)} 个档位 · ${fmt(row.machine_count, 0)} 台矿机</span>
+    </span>
+  </span>`;
+}
+
 function distributionTriggerHTML(row) {
   const templates = groupDistribution(
     row.templates, "template_name", "当前小时未记录算力组",
@@ -945,9 +980,9 @@ function distributionTriggerHTML(row) {
   return `<div class="distribution-trigger">
     <div class="distribution-trigger-copy">
       <span>箱内配置分布</span>
-      <strong>${machineHoursAvailable
-        ? `${templates.validCategoryCount} 个算力组 · ${workModes.validCategoryCount} 个档位 · ${fmt(row.machine_count, 0)} 台矿机`
-        : "矿机小时数据未采集"}</strong>
+      ${machineHoursAvailable
+        ? templateSummaryHTML(row, templates, workModes)
+        : `<span class="distribution-summary-line is-muted">矿机小时数据未采集</span>`}
     </div>
     <button type="button" data-distribution-id="${esc(row.warehouse_id)}"${hasDistribution ? "" : " disabled"} title="${hasDistribution ? "查看算力组和档位分布" : "当前小时没有分布数据"}">
       <i data-lucide="chart-pie"></i>${hasDistribution ? "查看分布" : "暂无分布"}

@@ -1116,6 +1116,88 @@ async function verifyBrowser(catalog) {
     assert.equal(await page.locator(
       ".warehouse-card .distribution-trigger",
     ).count(), boxesWithData);
+    const templateSummaryFixture = await page.evaluate(() => {
+      const baseRow = {
+        warehouse_id: "template-summary-multi",
+        machine_count: 61,
+        machine_data_available: true,
+        work_modes: [
+          { work_mode: "睡眠", machine_count: 1 },
+          { work_mode: "正常", machine_count: 60 },
+        ],
+      };
+      const fixture = document.createElement("article");
+      fixture.id = "template-summary-fixture";
+      fixture.className = "warehouse-card";
+      fixture.style.cssText = "position:relative;width:360px;margin:20px;";
+      fixture.innerHTML = `
+        <div id="template-summary-multi">${distributionTriggerHTML({
+          ...baseRow,
+          templates: [
+            { template_id: "beta", template_name: "Beta", machine_count: 1 },
+            { template_id: "alpha", template_name: "Alpha", machine_count: 58 },
+            { template_id: "gamma", template_name: "Gamma", machine_count: 2 },
+          ],
+        })}</div>
+        <div id="template-summary-single">${distributionTriggerHTML({
+          ...baseRow,
+          warehouse_id: "template-summary-single",
+          machine_count: 58,
+          templates: [
+            { template_id: "alpha", template_name: "Alpha", machine_count: 58 },
+          ],
+        })}</div>`;
+      document.querySelector("main").prepend(fixture);
+      const multi = fixture.querySelector("#template-summary-multi");
+      const single = fixture.querySelector("#template-summary-single");
+      return {
+        multiText: multi.querySelector(".distribution-summary-line").textContent,
+        multiGroups: [...multi.querySelectorAll(
+          ".template-summary-popover-row",
+        )].map(row => row.textContent.replace(/\s+/g, " ").trim()),
+        singleText: single.querySelector(".distribution-summary-line").textContent,
+        singleMoreCount: single.querySelectorAll(
+          ".template-summary-more",
+        ).length,
+      };
+    });
+    assert(templateSummaryFixture.multiText.includes("算力组"));
+    assert(templateSummaryFixture.multiText.includes("Alpha"));
+    assert(templateSummaryFixture.multiText.includes("58 台"));
+    assert(templateSummaryFixture.multiText.includes("+3"));
+    assert(templateSummaryFixture.multiText.includes("2 个档位"));
+    assert(templateSummaryFixture.multiText.includes("61 台矿机"));
+    assert.deepEqual(templateSummaryFixture.multiGroups, [
+      "Alpha 58 台",
+      "Gamma 2 台",
+      "Beta 1 台",
+    ]);
+    assert(templateSummaryFixture.singleText.includes("Alpha"));
+    assert(!templateSummaryFixture.singleText.includes("+0"));
+    assert.equal(templateSummaryFixture.singleMoreCount, 0);
+    assert.equal(await page.locator(
+      "#template-summary-fixture .template-summary-popover",
+    ).first().evaluate(element => getComputedStyle(element).visibility), "hidden");
+    const templateSummaryTrigger = page.locator(
+      "#template-summary-multi .template-summary",
+    );
+    await templateSummaryTrigger.hover();
+    await page.waitForTimeout(160);
+    assert.equal(await page.locator(
+      "#template-summary-multi .template-summary-popover",
+    ).evaluate(element => getComputedStyle(element).visibility), "visible");
+    assert.equal(await page.locator(
+      "#template-summary-fixture",
+    ).evaluate(element => getComputedStyle(element).overflow), "visible");
+    await page.mouse.move(0, 0);
+    await templateSummaryTrigger.focus();
+    await page.waitForTimeout(160);
+    assert.equal(await page.locator(
+      "#template-summary-multi .template-summary-popover",
+    ).evaluate(element => getComputedStyle(element).visibility), "visible");
+    await page.evaluate(() =>
+      document.getElementById("template-summary-fixture").remove()
+    );
     assert.equal(await page.locator(".warehouse-card .card-coverage").count(),
       whiteoak.warehouse_count);
     const cardStates = await page.evaluate(() => {
