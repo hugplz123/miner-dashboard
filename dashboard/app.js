@@ -179,7 +179,10 @@ let catalog, sites = [], warehouses = [], dates = [], hours = [], currentRows = 
 let selectedDate, dayData, detailData, detailContext, detailSummaryRow;
 let level = "template_rows";
 let requestVersion = 0, dayRequestVersion = 0, trendMode = "daily";
-let trendMetric = "ratio", trendState = null, loadFilter = "all";
+let trendMetric = "ratio", environmentView = "environment";
+let environmentMeasure = "temperature";
+let trendState = null, humidityTrendState = null;
+let loadFilter = "all";
 let distributionWarehouseId = null;
 let powerLimitFilter = "all", detailPowerLimitW = null;
 let meterTrendState = null;
@@ -806,7 +809,11 @@ function populateDates(preferredDate) {
 
 function populateHours() {
   const site = currentSite();
-  hours = [...(site?.hours_by_date?.[selectedDate] || [])].sort();
+  hours = [...(
+    site?.display_hours_by_date?.[selectedDate]
+    || site?.hours_by_date?.[selectedDate]
+    || []
+  )].sort();
   $("hour").innerHTML = hours.map(hour =>
     `<option value="${hour}">${hourLabel(hour)}</option>`
   ).join("");
@@ -820,7 +827,7 @@ function loadHour(siteId, date, hour) {
     catalog.data_version || catalog.exported_at || catalog.latest_date,
   );
   const promise = fetchGzipJson(
-    `data/hours/${siteId}-${compactDate(date)}-${String(hour).slice(-2)}.json.gz?v=${version}`
+    `data/hours/${siteId}-${compactDate(date)}-${String(hour % 100).padStart(2, "0")}.json.gz?v=${version}`
   );
   hourCache.set(cacheKey, promise);
   promise.catch(() => hourCache.delete(cacheKey));
@@ -1107,6 +1114,14 @@ function larkPanelHTML(row) {
   const status = presentFields === capacityFields.length
     ? "已匹配" : presentFields ? "部分缺失" : "字段缺失";
   const theory = warehouseTheoreticalPower(row);
+  const actualPower = finite(row?.actual_power_kw)
+    ? Number(row.actual_power_kw)
+    : null;
+  const capacityShare = value => (
+    finite(actualPower) && finite(value) && Number(value) > 0
+      ? actualPower / Number(value) * 100
+      : null
+  );
   const capacityRow = (label, value, note) => {
     const noteHTML = note
       ? `<div class="capacity-note">${esc(note)}</div>`
@@ -1117,9 +1132,22 @@ function larkPanelHTML(row) {
         ${noteHTML}
       </div>`;
     }
+    const share = capacityShare(value);
+    const shareLabel = label === "在架功率" ? "在架" : "占位";
+    const shareText = finite(share) ? `${fmt(share)}%` : "—";
+    const shareTitle = finite(actualPower)
+      ? Number(value) > 0
+        ? `矿箱小时实际功率 ${fmt(actualPower)} kW ÷ ${label} ${fmt(value)} kW = ${shareText}`
+        : `${label}为 0 kW，无法计算矿箱小时实际功率占比`
+      : `当前小时缺少矿箱小时实际功率，无法计算实际/${shareLabel}占比`;
+    const shareHTML = `<span class="capacity-share"
+      data-share-percent="${finite(share) ? esc(share) : ""}"
+      data-actual-power-kw="${finite(actualPower) ? esc(actualPower) : ""}"
+      data-denominator-kw="${esc(value)}"
+      title="${esc(shareTitle)}">（实际/${shareLabel} ${shareText}）</span>`;
     if (!finite(theory) || Number(theory) <= 0) {
       return `<div class="capacity-row">
-        <span>${label}</span><strong>${fmt(value)}<small>kW</small></strong>
+        <span>${label}</span><strong>${fmt(value)}<small>kW</small>${shareHTML}</strong>
         <em>缺少矿箱理论功率</em>
         ${noteHTML}
       </div>`;
@@ -1130,7 +1158,7 @@ function larkPanelHTML(row) {
     return `<div class="capacity-row${over ? " over" : ""}">
       <div class="capacity-copy">
         <span>${label}</span>
-        <strong>${fmt(value)}<small>kW</small></strong>
+        <strong>${fmt(value)}<small>kW</small>${shareHTML}</strong>
         <em>${over
           ? `超出矿箱理论功率 ${fmt(Math.abs(margin))}`
           : `矿箱理论功率余量 ${fmt(margin)}`} kW</em>
@@ -1259,11 +1287,32 @@ function cardCoverageHTML(observed, expected = expectedHoursPerDay) {
   const complete = observedHours >= expectedHours;
   const width = Math.max(0, Math.min(100, observedHours / expectedHours * 100));
   return `<div class="card-coverage ${complete ? "complete" : "incomplete"}">
-    <span>矿箱当日小时覆盖</span>
+    <span>矿箱当日功率小时覆盖</span>
     <div class="card-coverage-track" title="当日覆盖 ${esc(coverageLabel(observedHours, expectedHours))}">
       <i style="width:${width}%"></i>
     </div>
     <strong>${esc(coverageLabel(observedHours, expectedHours))}</strong>
+  </div>`;
+}
+
+function environmentReadingsHTML(row) {
+  const siteSample = row.site_environment_sampled_at
+    ? timestampLabel(row.site_environment_sampled_at) : "未记录";
+  const containerSample = row.container_environment_sampled_at
+    ? timestampLabel(row.container_environment_sampled_at) : "未记录";
+  return `<div class="environment-readings">
+    <div class="environment-reading">
+      <span>场地环境温湿度</span>
+      <strong>${fmt(row.site_environment_temperature_c)} °C</strong>
+      <em>${fmt(row.site_environment_humidity_percent)}%</em>
+      <time>采样 ${esc(siteSample)}</time>
+    </div>
+    <div class="environment-reading">
+      <span>矿箱环境温湿度</span>
+      <strong>${fmt(row.container_environment_temperature_c)} °C</strong>
+      <em>${fmt(row.container_environment_humidity_percent)}%</em>
+      <time>采样 ${esc(containerSample)}</time>
+    </div>
   </div>`;
 }
 
@@ -1295,6 +1344,7 @@ function cardHTML(row) {
     return `<article class="warehouse-card missing-card" data-warehouse-id="${esc(row.warehouse_id)}" data-load-class="no_hour">
       <div class="card-head"><div class="card-title"><strong>${esc(row.warehouse_name)}</strong><span class="status status-no_hour">本小时矿箱数据缺失</span></div></div>
       ${cardCoverageHTML(observedHours)}
+      ${environmentReadingsHTML(row)}
       <div class="missing-state">
         <strong>暂无上报数据</strong>
         <span>本小时没有矿箱数据，不代表矿箱实际功率为 0 kW。</span>
@@ -1310,6 +1360,11 @@ function cardHTML(row) {
   const machineDataAvailable = hasMachineData(row);
   const meterDataAvailable = hasMeterData(row);
   const meterOnly = meterDataAvailable && !machineDataAvailable;
+  const environmentOnly = Boolean(
+    row.environment_data_available
+    && !machineDataAvailable
+    && !meterDataAvailable
+  );
   const zeroPower = actualPowerAvailable && Number(row.actual_power_kw) === 0;
   const powerMissing = machineDataAvailable && !actualPowerAvailable;
   const loadPercent = hasTheory
@@ -1321,10 +1376,14 @@ function cardHTML(row) {
   const reportingBadge = finite(installedMachines)
     ? `<span class="reporting ${reportingMismatch ? "warn" : "ok"}">上报 ${row.machine_count} / ${capacityCountLabel} ${installedMachines} 台</span>`
     : "";
-  const statusText = meterOnly
+  const statusText = environmentOnly
+    ? "本小时功率数据缺失"
+    : meterOnly
     ? "矿机小时数据缺失"
     : loadClassLabel(classification, row);
-  const details = outage
+  const details = environmentOnly
+    ? `<button type="button" disabled title="本小时只有温湿度数据，没有功率明细">无功率明细</button>`
+    : outage
     ? `<button type="button" disabled title="本小时为停电推断，没有单机明细">本小时无明细</button>`
     : meterOnly
     ? `<button type="button" disabled title="本小时只有电表数据，没有矿机明细">仅电表数据</button>`
@@ -1334,6 +1393,7 @@ function cardHTML(row) {
   const cardClasses = [
     "warehouse-card",
     outage ? "inferred-outage-card" : "",
+    environmentOnly ? "environment-only-card" : "",
     overload ? "overload" : "",
     classification === "below" ? "below-theory" : "",
     meterOnly ? "meter-only-card" : "",
@@ -1345,15 +1405,20 @@ function cardHTML(row) {
       ${details}
     </div>
     ${cardCoverageHTML(observedHours)}
+    ${environmentReadingsHTML(row)}
     <div class="power-block">
       <div class="power-label">矿箱小时实际功率<time class="power-time">采样时间 ${esc(machineSample)}</time>${outage
         ? `<span class="inferred-outage-badge">停电推断</span>`
+        : environmentOnly
+          ? `<span class="reporting meter-only">本小时功率数据缺失</span>`
         : !machineDataAvailable
           ? `<span class="reporting meter-only">矿机数据未采集</span>`
           : ""}${reportingBadge}</div>
       <div class="power-line">
         <span class="actual-power${machineDataAvailable ? "" : " unavailable"}">${machineDataAvailable ? fmt(row.actual_power_kw) : "—"}${machineDataAvailable ? "<small>kW</small>" : ""}</span>
-        ${!machineDataAvailable
+        ${environmentOnly
+          ? `<span class="power-unavailable">本小时只有温湿度数据，不推断停电或 0 kW</span>`
+          : !machineDataAvailable
           ? `<span class="power-unavailable">本小时仅展示电表实测</span>`
           : hasTheory
             ? `<span class="power-reference">矿箱理论功率 ${fmt(row.theoretical_power_kw)} kW</span>`
@@ -1442,7 +1507,9 @@ function render() {
   $("brand-name").textContent = site.data_center_name;
   const trendLabel = trendMetric === "ratio"
     ? "矿箱整体功耗比趋势"
-    : "矿箱功率趋势";
+    : trendMetric === "environment"
+      ? "环境与矿机温度趋势"
+      : "矿箱功率趋势";
   $("trend-title").textContent = `${site.data_center_name} ${trendLabel}`;
   $("trend").setAttribute("aria-label", `${site.data_center_name} ${trendLabel}`);
   const warehouseCoverage = `${activeWarehouseCount} 个矿箱`;
@@ -1620,6 +1687,23 @@ function dailySeries() {
         ? Number(item.meter_hour_peak_kw) : null,
       meterPeakHour: finite(item.meter_hour_peak_hour)
         ? Number(item.meter_hour_peak_hour) : null,
+      siteEnvironmentTemperature:
+        finite(item.site_environment_temperature_avg_c)
+          ? Number(item.site_environment_temperature_avg_c) : null,
+      siteEnvironmentHumidity:
+        finite(item.site_environment_humidity_avg_percent)
+          ? Number(item.site_environment_humidity_avg_percent) : null,
+      containerEnvironmentTemperature:
+        finite(item.container_environment_temperature_avg_c)
+          ? Number(item.container_environment_temperature_avg_c) : null,
+      containerEnvironmentHumidity:
+        finite(item.container_environment_humidity_avg_percent)
+          ? Number(item.container_environment_humidity_avg_percent) : null,
+      machineTemperature:
+        finite(item.machine_temperature_avg_c)
+          ? Number(item.machine_temperature_avg_c) : null,
+      environmentAvailable: Boolean(item.environment_hours_with_data),
+      powerAvailable: Boolean(observed),
       theoreticalPower: siteTheoreticalPower(item),
       runningPower: larkPowerSnapshot(site, item.date).runningPower,
       detail: item,
@@ -1634,7 +1718,9 @@ function hourlySeries() {
   const daily = dailyFor(selectedDate);
   const lark = larkPowerSnapshot(site, selectedDate);
   const theoryPower = siteTheoreticalPower();
-  const recordedHours = new Set(hours.map(Number));
+  const powerHours = new Set(
+    (site?.hours_by_date?.[selectedDate] || []).map(Number),
+  );
   const summaries = new Map(
     (dayData.hourly_summary || []).map(item => [Number(item.hour), item]),
   );
@@ -1645,23 +1731,36 @@ function hourlySeries() {
   return Array.from({ length: expectedHoursPerDay }, (_, index) => {
     const hour = Number(`${compactDate(selectedDate)}${String(index).padStart(2, "0")}`);
     const summary = summaries.get(hour);
-    const hasData = recordedHours.has(hour);
+    const hasPower = powerHours.has(hour);
     return {
       key: String(hour),
       label: localHourClockLabel(hour),
       periodLabel: hourLabel(hour),
       ratio: summary?.power_ratio_overall_w_per_th ?? null,
-      actualPower: hasData ? summary?.actual_power_kw ?? null : null,
+      actualPower: hasPower ? summary?.actual_power_kw ?? null : null,
       meterPower: summary?.meter_hour_sum_kw ?? null,
       meterPeakPower,
       meterPeakHour,
+      siteEnvironmentTemperature:
+        summary?.site_environment_temperature_c ?? null,
+      siteEnvironmentHumidity:
+        summary?.site_environment_humidity_percent ?? null,
+      containerEnvironmentTemperature:
+        summary?.container_environment_temperature_c ?? null,
+      containerEnvironmentHumidity:
+        summary?.container_environment_humidity_percent ?? null,
+      machineTemperature: summary?.machine_temperature_c ?? null,
+      environmentAvailable: Boolean(
+        summary?.environment_data_available,
+      ),
+      powerAvailable: hasPower,
       theoreticalPower: theoryPower,
       runningPower: lark.available ? lark.runningPower : null,
       detail: {
         machine_count: summary?.machine_count ?? null,
         power_ratio_sample_count: summary?.power_ratio_sample_count ?? null,
       },
-      missing: !hasData,
+      missing: !hasPower,
     };
   });
 }
@@ -1701,10 +1800,111 @@ function chartPath(points) {
   ).join(" ");
 }
 
+function chartLegendHTML(definitions) {
+  return definitions.map(definition =>
+    `<span><i class="${definition.className}"></i>${esc(definition.label)}</span>`
+  ).join("");
+}
+
+function humidityDefinitions() {
+  return [
+    {
+      key: "siteEnvironmentHumidity",
+      label: "场地环境湿度",
+      className: "site-environment-humidity",
+      unit: "%",
+      value: item => item.siteEnvironmentHumidity,
+    },
+    {
+      key: "containerEnvironmentHumidity",
+      label: "矿箱环境湿度",
+      className: "container-environment-humidity",
+      unit: "%",
+      value: item => item.containerEnvironmentHumidity,
+    },
+  ];
+}
+
 function renderTrend() {
   if (!dayData || dayData.date !== selectedDate) return;
+  if (trendMetric === "environment" && trendMode !== "hourly") {
+    trendMode = "hourly";
+    document.querySelectorAll("[data-trend-mode]").forEach(button => {
+      button.setAttribute(
+        "aria-pressed",
+        button.dataset.trendMode === "hourly" ? "true" : "false",
+      );
+    });
+  }
   const series = trendMode === "daily" ? dailySeries() : hourlySeries();
   const dailyMode = trendMode === "daily";
+  const environmentMode = trendMetric === "environment";
+  const machineTemperatureMode = environmentMode
+    && environmentView === "machine-temperature";
+  const environmentTemperatureMode = environmentMode
+    && environmentView === "environment"
+    && environmentMeasure === "temperature";
+  const humidityMode = environmentMode
+    && environmentView === "environment"
+    && environmentMeasure === "humidity";
+  const mainTemperatureMode = environmentMode && !humidityMode;
+  const humidityWrap = $("environment-humidity-wrap");
+  $("environment-switch-row").hidden = !environmentMode;
+  document.querySelectorAll("[data-environment-view]").forEach(button => {
+    const pressed = button.dataset.environmentView === environmentView;
+    button.setAttribute("aria-pressed", pressed ? "true" : "false");
+  });
+  const measureSwitch = $("environment-measure-switch");
+  measureSwitch.hidden = !environmentMode || environmentView !== "environment";
+  document.querySelectorAll("[data-environment-measure]").forEach(button => {
+    const pressed = button.dataset.environmentMeasure === environmentMeasure;
+    button.setAttribute("aria-pressed", pressed ? "true" : "false");
+  });
+  $("chart-wrap").hidden = humidityMode;
+  humidityWrap.hidden = !humidityMode;
+  $("temperature-chart-legend").hidden = !mainTemperatureMode;
+  if (!mainTemperatureMode) {
+    trendState = null;
+    $("chart-tooltip").hidden = true;
+  }
+  if (!humidityMode) {
+    humidityTrendState = null;
+    $("environment-humidity-trend").innerHTML = "";
+    $("environment-humidity-tooltip").hidden = true;
+  }
+  if (humidityMode) {
+    const selectedKey = String($("hour").value);
+    const selected = series.find(item => item.key === selectedKey);
+    const periodText = hourLabel(Number(selected?.key));
+    const environmentCoverage = series.filter(item =>
+      item.environmentAvailable
+    ).length;
+    $("trend-title").textContent =
+      `${currentSite().data_center_name} 环境温湿度 · 环境湿度 · 当日逐小时`;
+    $("trend").setAttribute("aria-label", "场地与矿箱环境湿度趋势");
+    $("chart-note").textContent =
+      `${localDayRangeLabel(selectedDate)} 当日逐小时湿度 · 包含场地环境湿度和矿箱环境湿度 · 固定展示 24 个小时点，缺失小时断线 · 展示时区 ${TIMEZONE_SCOPE} · 环境覆盖 ${coverageLabel(environmentCoverage)}`;
+    $("trend-summary").innerHTML = `
+      <div class="trend-stat">
+        <span class="trend-stat-label">当前小时场地环境湿度</span>
+        <span class="trend-stat-reading">
+          <span class="trend-stat-value">${fmt(selected?.siteEnvironmentHumidity)}</span>
+          <span class="trend-stat-unit">%</span>
+        </span>
+        <span class="trend-stat-context">${esc(periodText)}</span>
+      </div>
+      <div class="trend-stat">
+        <span class="trend-stat-label">当前小时矿箱环境湿度</span>
+        <span class="trend-stat-reading">
+          <span class="trend-stat-value">${fmt(selected?.containerEnvironmentHumidity)}</span>
+          <span class="trend-stat-unit">%</span>
+        </span>
+        <span class="trend-stat-context">${esc(periodText)}</span>
+      </div>`;
+    $("trend").innerHTML = "";
+    renderHumidityTrend(series, dailyMode, selectedKey);
+    return;
+  }
   const definitions = trendMetric === "ratio"
     ? [{
         key: "ratio",
@@ -1716,6 +1916,34 @@ function renderTrend() {
         primary: true,
         area: true,
       }]
+    : environmentMode
+      ? machineTemperatureMode
+        ? [{
+            key: "machineTemperature",
+            label: "矿箱内矿机温度",
+            className: "machine-temperature",
+            unit: "°C",
+            value: item => item.machineTemperature,
+            chartValue: item => item.machineTemperature,
+          }]
+        : [
+            {
+              key: "siteEnvironmentTemperature",
+              label: "场地环境温度",
+              className: "site-environment",
+              unit: "°C",
+              value: item => item.siteEnvironmentTemperature,
+              chartValue: item => item.siteEnvironmentTemperature,
+            },
+            {
+              key: "containerEnvironmentTemperature",
+              label: "矿箱环境温度",
+              className: "container-environment",
+              unit: "°C",
+              value: item => item.containerEnvironmentTemperature,
+              chartValue: item => item.containerEnvironmentTemperature,
+            },
+          ]
     : [
         {
           key: "meter",
@@ -1749,12 +1977,19 @@ function renderTrend() {
           chartValue: item => item.actualPower,
         },
       ];
+  if (environmentMode) {
+    $("temperature-chart-legend").innerHTML = chartLegendHTML(definitions);
+  }
   const primary = definitions.find(definition => definition.anchor)
     || definitions[0];
   const scopeLabel = dailyMode ? "近 7 天日均" : "当日逐小时";
   const titleLabel = trendMetric === "ratio"
     ? `矿箱整体功耗比 · ${scopeLabel}`
-    : `矿箱功率 · ${scopeLabel}`;
+    : machineTemperatureMode
+      ? `矿机温度 · ${scopeLabel}`
+      : environmentTemperatureMode
+        ? `环境温湿度 · 环境温度 · ${scopeLabel}`
+      : `矿箱功率 · ${scopeLabel}`;
   $("trend-title").textContent = `${currentSite().data_center_name} ${titleLabel}`;
   $("trend").setAttribute(
     "aria-label",
@@ -1767,6 +2002,17 @@ function renderTrend() {
     $("chart-note").textContent = dailyMode
       ? `近 7 个 UTC 数据日 · 每天 1 个点 · 横轴日期按浏览器本地时段起点展示 · 当天全部有效小时样本功耗加权 · W/TH${incompleteDays ? " · * 存在小时或矿箱缺口" : ""}`
       : `${localDayRangeLabel(selectedDate)} 当日逐小时 · 每个点为对应 UTC 小时的整体功耗比 · W/TH · 展示时区 ${TIMEZONE_SCOPE} · 当日覆盖 ${coverageLabel(hours.length)} · 灰色带为数据缺失小时`;
+  }
+  else if (machineTemperatureMode) {
+    const machineTemperatureCoverage = series.filter(item =>
+      finite(item.machineTemperature)
+    ).length;
+    $("chart-note").textContent =
+      `${localDayRangeLabel(selectedDate)} 当日逐小时矿机温度 · 仅汇总矿箱内矿机温度 · 固定展示 24 个小时点，缺失小时断线 · 展示时区 ${TIMEZONE_SCOPE} · 矿机温度覆盖 ${coverageLabel(machineTemperatureCoverage)}`;
+  }
+  else if (environmentTemperatureMode) {
+    $("chart-note").textContent =
+      `${localDayRangeLabel(selectedDate)} 当日逐小时环境温度 · 对比场地环境温度与矿箱环境温度 · 固定展示 24 个小时点，缺失小时断线 · 展示时区 ${TIMEZONE_SCOPE} · 环境覆盖 ${coverageLabel(series.filter(item => item.environmentAvailable).length)}`;
   }
   else {
     $("chart-note").textContent = dailyMode
@@ -1781,7 +2027,9 @@ function renderTrend() {
   if (!allValues.length) {
     $("trend-summary").textContent = trendMetric === "ratio"
       ? "当前范围没有可计算的整体功耗比样本"
-      : "当前范围没有可用的功率数据";
+      : environmentMode
+        ? "当前范围没有可用的温度数据"
+        : "当前范围没有可用的功率数据";
     $("trend").innerHTML = "";
     trendState = null;
     return;
@@ -1803,8 +2051,10 @@ function renderTrend() {
     high - low,
     ratioMode ? 0.5 : Math.max(Math.abs(high) * 0.01, 6),
   );
-  const paddingRatio = ratioMode ? 0.28 : 0.18;
-  const minValue = Math.max(0, low - span * paddingRatio);
+  const paddingRatio = ratioMode ? 0.28 : environmentMode ? 0.22 : 0.18;
+  const minValue = environmentMode
+    ? low - span * paddingRatio
+    : Math.max(0, low - span * paddingRatio);
   const maxValue = high + span * paddingRatio;
   const x = index => pad.left + (series.length === 1
     ? plotW / 2 : plotW * index / (series.length - 1));
@@ -1844,6 +2094,42 @@ function renderTrend() {
           <span class="trend-stat-unit">W/TH</span>
         </span>
         <span class="trend-stat-context">${averageContext}</span>
+      </div>`;
+  }
+  else if (machineTemperatureMode) {
+    const periodText = dailyMode
+      ? `${selected?.label || ""} · 当日有效小时等权平均`
+      : hourLabel(Number(selected?.key));
+    $("trend-summary").innerHTML = `
+      <div class="trend-stat">
+        <span class="trend-stat-label">矿机温度</span>
+        <span class="trend-stat-reading">
+          <span class="trend-stat-value">${fmt(selected?.machineTemperature)}</span>
+          <span class="trend-stat-unit">°C</span>
+        </span>
+        <span class="trend-stat-context">${dailyMode ? "矿机小时温度等权平均" : "当前小时矿箱内矿机温度平均"} · ${esc(periodText)}</span>
+      </div>`;
+  }
+  else if (environmentTemperatureMode) {
+    const periodText = dailyMode
+      ? `${selected?.label || ""} · 当日有效小时等权平均`
+      : hourLabel(Number(selected?.key));
+    $("trend-summary").innerHTML = `
+      <div class="trend-stat">
+        <span class="trend-stat-label">场地环境温度</span>
+        <span class="trend-stat-reading">
+          <span class="trend-stat-value">${fmt(selected?.siteEnvironmentTemperature)}</span>
+          <span class="trend-stat-unit">°C</span>
+        </span>
+        <span class="trend-stat-context">${esc(periodText)}</span>
+      </div>
+      <div class="trend-stat">
+        <span class="trend-stat-label">矿箱环境温度</span>
+        <span class="trend-stat-reading">
+          <span class="trend-stat-value">${fmt(selected?.containerEnvironmentTemperature)}</span>
+          <span class="trend-stat-unit">°C</span>
+        </span>
+        <span class="trend-stat-context">${esc(periodText)}</span>
       </div>`;
   }
   else {
@@ -1887,7 +2173,7 @@ function renderTrend() {
     const value = maxValue - (maxValue - minValue) * index / 3;
     const yPos = pad.top + plotH * index / 3;
     return `<line class="chart-grid" x1="${pad.left}" x2="${width - pad.right}" y1="${yPos}" y2="${yPos}"/>
-      <text class="chart-axis" x="0" y="${yPos + 3}">${ratioMode ? fmtRatio(value) : `${fmt(value)} kW`}</text>`;
+      <text class="chart-axis" x="0" y="${yPos + 3}">${ratioMode ? fmtRatio(value) : environmentMode ? `${fmt(value)} °C` : `${fmt(value)} kW`}</text>`;
   }).join("");
   const meanY = ratioMode && finite(average) ? y(average) : null;
   const labelEvery = series.length > 12 ? 4 : 1;
@@ -1895,7 +2181,12 @@ function renderTrend() {
     ? `<text class="chart-hour" x="${x(index)}" y="${height - 7}" text-anchor="middle" data-chart-key="${esc(item.key)}">${esc(item.label)}</text>` : "").join("");
   const hitWidth = plotW / Math.max(series.length, 1);
   const missingBands = trendMode === "hourly" ? series.map((item, index) => {
-    if (!item.missing) return "";
+    const isMissing = machineTemperatureMode
+      ? !finite(item.machineTemperature)
+      : environmentTemperatureMode
+        ? !item.environmentAvailable
+        : item.missing;
+    if (!isMissing) return "";
     const left = Math.max(pad.left, x(index) - hitWidth / 2);
     const right = Math.min(width - pad.right, x(index) + hitWidth / 2);
     return `<rect class="chart-missing-band" x="${left}" y="${pad.top}" width="${Math.max(1, right - left)}" height="${plotH}"/>`;
@@ -1917,6 +2208,10 @@ function renderTrend() {
       : "";
     const valueText = ratioMode
       ? `矿箱整体功耗比 ${fmtRatio(item.ratio)} W/TH`
+      : machineTemperatureMode
+        ? `矿机温度 ${fmt(item.machineTemperature)} °C`
+      : environmentTemperatureMode
+        ? `场地环境温度 ${fmt(item.siteEnvironmentTemperature)} °C，矿箱环境温度 ${fmt(item.containerEnvironmentTemperature)} °C`
       : dailyMode
         ? `当日电表平均功率 ${fmt(item.meterPower)} kW，当日矿箱平均功率 ${fmt(item.actualPower)} kW，当日电表最大功率 ${fmt(item.meterPeakPower)} kW${finite(item.meterPeakHour) ? `（${hourOnlyLabel(Number(item.meterPeakHour))}）` : ""}`
         : `电表小时实测功率 ${fmt(item.meterPower)} kW，矿箱小时实际功率 ${fmt(item.actualPower)} kW，当日电表最大功率 ${fmt(item.meterPeakPower)} kW${finite(item.meterPeakHour) ? `（${hourOnlyLabel(Number(item.meterPeakHour))}）` : ""}`;
@@ -1962,6 +2257,8 @@ function renderTrend() {
   trendState = {
     series, definitions, primary, width, height, pad, minValue, maxValue,
     plotW, plotH, metric: trendMetric, mode: trendMode,
+    environmentGroup: environmentMode ? environmentView : null,
+    environmentMeasure: environmentMode ? environmentMeasure : null,
   };
   svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
   svg.setAttribute("width", width);
@@ -1973,6 +2270,148 @@ function renderTrend() {
     ${selection}
     ${linePaths}
     ${hits}${currentPoints}${labels}`;
+}
+
+function renderHumidityTrend(series, dailyMode, selectedKey) {
+  const svg = $("environment-humidity-trend");
+  const tooltip = $("environment-humidity-tooltip");
+  const definitions = humidityDefinitions();
+  $("humidity-chart-legend").innerHTML = chartLegendHTML(definitions);
+  const values = definitions.flatMap(definition =>
+    series.map(item => trendNumber(definition, item))
+      .filter(value => value != null)
+  );
+  const width = Math.max(300, svg.parentElement.clientWidth);
+  const height = 218;
+  if (!values.length) {
+    humidityTrendState = null;
+    tooltip.hidden = true;
+    svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+    svg.setAttribute("width", width);
+    svg.setAttribute("height", height);
+    svg.innerHTML = `<text class="chart-empty" x="${width / 2}" y="${height / 2}" text-anchor="middle">当日暂无可用湿度数据</text>`;
+    return;
+  }
+
+  const pad = { left: 43, right: 14, top: 20, bottom: 27 };
+  const plotW = width - pad.left - pad.right;
+  const plotH = height - pad.top - pad.bottom;
+  const low = Math.min(...values);
+  const high = Math.max(...values);
+  const span = Math.max(high - low, Math.max(Math.abs(high) * 0.01, 1));
+  const minValue = Math.max(0, low - span * 0.22);
+  const maxValue = Math.min(100, high + span * 0.22);
+  const x = index => pad.left + plotW * index / Math.max(series.length - 1, 1);
+  const y = value => pad.top + plotH
+    * (1 - (value - minValue) / Math.max(0.001, maxValue - minValue));
+  const grid = [0, 1, 2, 3].map(index => {
+    const value = maxValue - (maxValue - minValue) * index / 3;
+    const yPos = pad.top + plotH * index / 3;
+    return `<line class="chart-grid" x1="${pad.left}" x2="${width - pad.right}" y1="${yPos}" y2="${yPos}"/>
+      <text class="chart-axis" x="0" y="${yPos + 3}">${fmt(value)} %</text>`;
+  }).join("");
+  const labelEvery = series.length > 12 ? 4 : 1;
+  const labels = series.map((item, index) => index % labelEvery === 0
+    ? `<text class="chart-hour" x="${x(index)}" y="${height - 7}" text-anchor="middle" data-chart-key="${esc(item.key)}">${esc(item.label)}</text>`
+    : "").join("");
+  const hitWidth = plotW / Math.max(series.length, 1);
+  const missingBands = series.map((item, index) => {
+    if (item.environmentAvailable) return "";
+    const left = Math.max(pad.left, x(index) - hitWidth / 2);
+    const right = Math.min(width - pad.right, x(index) + hitWidth / 2);
+    return `<rect class="chart-missing-band" x="${left}" y="${pad.top}" width="${Math.max(1, right - left)}" height="${plotH}"/>`;
+  }).join("");
+  const pointsByDefinition = new Map(definitions.map(definition => [
+    definition.key,
+    series.map((item, index) => {
+      const value = chartNumber(definition, item);
+      return value == null ? null : [x(index), y(value)];
+    }),
+  ]));
+  const hits = series.map((item, index) => {
+    const dateText = dailyMode ? item.periodLabel : hourLabel(Number(item.key));
+    const valueText = item.environmentAvailable
+      ? `场地环境湿度 ${fmt(item.siteEnvironmentHumidity)}%，矿箱环境湿度 ${fmt(item.containerEnvironmentHumidity)}%`
+      : "环境湿度数据缺失";
+    const markers = definitions.map(definition => {
+      const point = pointsByDefinition.get(definition.key)?.[index];
+      return point
+        ? `<circle class="chart-point ${definition.className}" cx="${point[0]}" cy="${point[1]}" r="3.4"/>`
+        : "";
+    }).join("");
+    return `<g class="chart-hit-group">
+      <rect class="chart-hit" x="${x(index) - hitWidth / 2}" y="${pad.top}" width="${hitWidth}" height="${plotH}" tabindex="0" role="button" data-chart-key="${esc(item.key)}" aria-label="${esc(dateText)}，${esc(valueText)}，点击查看"></rect>
+      ${markers}
+    </g>`;
+  }).join("");
+  const linePaths = definitions.map(definition => {
+    const segments = chartSegments(pointsByDefinition.get(definition.key));
+    const paths = segments.map(segment => segment.length > 1
+      ? `<path class="chart-line ${definition.className}" d="${chartPath(segment)}"/>`
+      : "").join("");
+    const singletonPoints = segments.filter(segment => segment.length === 1)
+      .map(([point]) =>
+        `<circle class="chart-series-point ${definition.className}" cx="${point[0]}" cy="${point[1]}" r="3.2"/>`
+      ).join("");
+    return `${paths}${singletonPoints}`;
+  }).join("");
+  const currentIndex = series.findIndex(item => item.key === selectedKey);
+  const selection = currentIndex < 0 ? ""
+    : `<line class="chart-selection" x1="${x(currentIndex)}" x2="${x(currentIndex)}" y1="${pad.top}" y2="${pad.top + plotH}"/>`;
+  const currentPoints = currentIndex < 0 ? "" : definitions.map(definition => {
+    const point = pointsByDefinition.get(definition.key)?.[currentIndex];
+    return point
+      ? `<circle class="chart-current ${definition.className}" cx="${point[0]}" cy="${point[1]}" r="4"/>`
+      : "";
+  }).join("");
+  humidityTrendState = {
+    series, definitions, width, height, pad, minValue, maxValue,
+    plotW, plotH, mode: trendMode, metric: "humidity",
+  };
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("width", width);
+  svg.setAttribute("height", height);
+  svg.innerHTML = `${missingBands}${grid}${selection}${linePaths}${hits}${currentPoints}${labels}`;
+}
+
+function showHumidityTooltip(event) {
+  if (!humidityTrendState) return;
+  const svg = $("environment-humidity-trend");
+  const tooltip = $("environment-humidity-tooltip");
+  const rect = svg.getBoundingClientRect();
+  const scale = humidityTrendState.width / rect.width;
+  const relativeX = (event.clientX - rect.left) * scale;
+  const { series, pad, plotW, plotH, minValue, maxValue } = humidityTrendState;
+  const index = Math.round(
+    (relativeX - pad.left) / Math.max(1, plotW) * (series.length - 1),
+  );
+  if (index < 0 || index >= series.length) {
+    tooltip.hidden = true;
+    return;
+  }
+  const item = series[index];
+  const dateText = humidityTrendState.mode === "daily"
+    ? item.periodLabel
+    : hourLabel(Number(item.key));
+  if (!item.environmentAvailable) {
+    tooltip.innerHTML = `<strong>环境湿度数据缺失</strong><span>${esc(dateText)}<br>该小时没有环境温湿度小时记录，曲线在此断开</span>`;
+  }
+  else {
+    tooltip.innerHTML = `<span>${esc(dateText)}</span>
+      <div class="tooltip-series">
+        <span><i style="color:#c47a32"></i>场地环境湿度</span><b>${fmt(item.siteEnvironmentHumidity)}%</b>
+        <span><i style="color:#247b78"></i>矿箱环境湿度</span><b>${fmt(item.containerEnvironmentHumidity)}%</b>
+      </div>`;
+  }
+  const humidityValue = item.containerEnvironmentHumidity
+    ?? item.siteEnvironmentHumidity;
+  const xPos = pad.left + plotW * index / Math.max(series.length - 1, 1);
+  const yPos = humidityValue == null ? pad.top
+    : pad.top + plotH * (1 - (humidityValue - minValue)
+      / Math.max(0.001, maxValue - minValue));
+  tooltip.style.left = `${Math.max(75, Math.min(rect.width - 75, xPos / scale))}px`;
+  tooltip.style.top = `${yPos / scale - 8}px`;
+  tooltip.hidden = false;
 }
 
 function showTooltip(event) {
@@ -1995,11 +2434,35 @@ function showTooltip(event) {
   const coverage = trendMode === "daily" && detail.expected_hours
     ? ` · ${siteCoverageLabel(detail)}`
     : "";
-  if (item.missing) {
+  const machineTemperatureMode = trendState.metric === "environment"
+    && trendState.environmentGroup === "machine-temperature";
+  const environmentTemperatureMode = trendState.metric === "environment"
+    && trendState.environmentGroup === "environment"
+    && trendState.environmentMeasure === "temperature";
+  if (machineTemperatureMode && !finite(item.machineTemperature)) {
+    tooltip.innerHTML = `<strong>矿机温度数据缺失</strong><span>${esc(dateText)}<br>该小时没有可用的矿箱内矿机温度汇总</span>`;
+  }
+  else if (environmentTemperatureMode && !item.environmentAvailable) {
+    tooltip.innerHTML = `<strong>环境温度数据缺失</strong><span>${esc(dateText)}<br>该小时没有被环境温湿度小时记录覆盖</span>`;
+  }
+  else if (item.missing && trendState.metric !== "environment") {
     tooltip.innerHTML = `<strong>矿箱数据缺失</strong><span>${esc(dateText)}<br>该小时没有被矿机小时汇总覆盖，不代表功率为 0 kW</span>`;
   }
   else if (trendState.metric === "ratio") {
     tooltip.innerHTML = `<strong>${fmtRatio(item.ratio)} W/TH</strong><span>${esc(dateText)}${esc(coverage)}<br>矿箱整体功耗比样本 ${detail.power_ratio_sample_count ?? "—"} / ${detail.machine_count ?? "—"}</span>`;
+  }
+  else if (machineTemperatureMode) {
+    tooltip.innerHTML = `<span>${esc(dateText)}</span>
+      <div class="tooltip-series">
+        <span><i style="color:#8064a1"></i>矿机温度</span><b>${fmt(item.machineTemperature)} °C</b>
+      </div>`;
+  }
+  else if (environmentTemperatureMode) {
+    tooltip.innerHTML = `<span>${esc(dateText)}</span>
+      <div class="tooltip-series">
+        <span><i style="color:#c47a32"></i>场地环境温度</span><b>${fmt(item.siteEnvironmentTemperature)} °C</b>
+        <span><i style="color:#247b78"></i>矿箱环境温度</span><b>${fmt(item.containerEnvironmentTemperature)} °C</b>
+      </div>`;
   }
   else {
     const meterLabel = trendState.mode === "daily"
@@ -2088,14 +2551,13 @@ async function selectHour(hour) {
   }
 }
 
-function bindChart() {
-  const svg = $("trend");
-  svg.addEventListener("pointermove", showTooltip);
-  svg.addEventListener("pointerleave", () => { $("chart-tooltip").hidden = true; });
+function bindTrendChart(svg, tooltip, showTooltipHandler) {
+  svg.addEventListener("pointermove", showTooltipHandler);
+  svg.addEventListener("pointerleave", () => { tooltip.hidden = true; });
   svg.addEventListener("click", async event => {
     const target = event.target.closest("[data-chart-key]");
     if (!target) return;
-    $("chart-tooltip").hidden = true;
+    tooltip.hidden = true;
     if (trendMode === "daily") {
       await selectDate(target.dataset.chartKey, Number($("hour").value));
     } else {
@@ -2113,6 +2575,15 @@ function bindChart() {
       await selectHour(Number(target.dataset.chartKey));
     }
   });
+}
+
+function bindChart() {
+  bindTrendChart($("trend"), $("chart-tooltip"), showTooltip);
+  bindTrendChart(
+    $("environment-humidity-trend"),
+    $("environment-humidity-tooltip"),
+    showHumidityTooltip,
+  );
 }
 
 async function fetchGzipJson(url, timeoutMs = 45000) {
@@ -2602,6 +3073,34 @@ function renderDetailSummary(row) {
         value: `${percent(row.rejected_rate_avg)} / ${percent(row.rejected_rate_max)}`,
         unit: "",
         note: "按矿机小时样本汇总",
+      },
+    ],
+  ) + detailMetricGroup(
+    "environment",
+    "环境温湿度",
+    "场地与矿箱环境按小时采样；矿机温度为箱内矿机小时平均",
+    [
+      {
+        label: "场地环境温度 / 湿度",
+        value: `${fmt(row.site_environment_temperature_c)} / ${fmt(row.site_environment_humidity_percent)}`,
+        unit: "°C / %",
+        note: row.site_environment_sampled_at
+          ? `采样 ${timestampLabel(row.site_environment_sampled_at)}`
+          : "本小时场地环境数据缺失",
+      },
+      {
+        label: "矿箱环境温度 / 湿度",
+        value: `${fmt(row.container_environment_temperature_c)} / ${fmt(row.container_environment_humidity_percent)}`,
+        unit: "°C / %",
+        note: row.container_environment_sampled_at
+          ? `采样 ${timestampLabel(row.container_environment_sampled_at)}`
+          : "本小时矿箱环境数据缺失",
+      },
+      {
+        label: "矿箱内矿机小时平均温度",
+        value: fmt(row.temperature_avg_c),
+        unit: "°C",
+        note: "矿机温度，不转换为环境温度",
       },
     ],
   ) + detailMetricGroup(
@@ -3289,9 +3788,25 @@ document.querySelectorAll("[data-trend-mode]").forEach(button => {
 });
 document.querySelectorAll("[data-trend-metric]").forEach(button => {
   button.onclick = () => {
-    trendMetric = button.dataset.trendMetric;
+    const nextMetric = button.dataset.trendMetric;
+    if (nextMetric === "environment" && trendMetric !== "environment") {
+      environmentView = "environment";
+    }
+    trendMetric = nextMetric;
     document.querySelectorAll("[data-trend-metric]").forEach(item =>
       item.setAttribute("aria-pressed", item === button ? "true" : "false"));
+    renderTrend();
+  };
+});
+document.querySelectorAll("[data-environment-view]").forEach(button => {
+  button.onclick = () => {
+    environmentView = button.dataset.environmentView;
+    renderTrend();
+  };
+});
+document.querySelectorAll("[data-environment-measure]").forEach(button => {
+  button.onclick = () => {
+    environmentMeasure = button.dataset.environmentMeasure;
     renderTrend();
   };
 });
